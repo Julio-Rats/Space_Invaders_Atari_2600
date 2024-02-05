@@ -2,7 +2,7 @@
 ;   see https://github.com/Julio-Rats/dasm
 ;
 ; Command to compile:
-;   dasm breakout.asm -obreakout.bin -f3
+;   dasm SpaceInvaders.asm -oSpaceInvaders.bin -f3
 ;
 
     PROCESSOR 6502
