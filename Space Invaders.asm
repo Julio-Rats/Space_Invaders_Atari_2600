@@ -176,7 +176,7 @@ LoadDefenseLoop:
     DEX
     BPL LoadDefenseLoop
 
-    LDA #%01000010  ; Starting Vblank
+    LDA #%01000010      ; Starting Vblank
     STA VBLANK
 
 ;===================================================================
@@ -269,7 +269,7 @@ LeftMove:
     SBC #MOVE_SPEED
     STA PLAYER_POS
 NoMove:
-
+;   Set X-Pos of Aliens
     LDA ALIENS_POS
     LDX #0
     JSR SetHorizPos
@@ -322,8 +322,7 @@ WaitVblankEnd:
     STA PF0
     STA PF1
     STA PF2
-
-
+;   Set Color, active 3 copies medium and Vertical Delay enable
     LDA #ENEMY_COLOR
     STA COLUP0
     STA COLUP1
@@ -382,32 +381,31 @@ DrawEnemies:    ; 22-30      0
     .BYTE $EA,$EA,$EA,$EA,$EA,$EA ; 6 NOP -> 12 Cycles Wasted -> 36 Color Clock
     DEC SPRITE_HEIGHT
     BPL DrawEnemies
-
+;   Stop Drawn Aliens
     LDA #0
     STA GRP0
     STA GRP1
     STA GRP0
+;   Prepare for Missiles
     STA NUSIZ0
     STA NUSIZ1
-
+;   Consume if line used Long JmpDelay (Adjust cycle synchronization)
     LDA ALIENS_DELAY
     SEC
     SBC #<JmpDelay
     SBC #14
     NOP
     BCC NotUseLineAlign
-    NOP
-    NOP
-    NOP
+    .BYTE $EA,$EA,$EA
     CMP $80
 NotUseLineAlign:
-
+;   Check End of Alines lines
     LDX ALIENS_NUM
     BEQ ExitAliens
     LDX ALIENS_COUNT
     LDA ALIENS_ATT-1,X
     STA ALIENS_ATT+6
-
+;   Set Next Line Sprites (pointer arithmetic)
     LDA ALIENS_TEMP
     CLC
     ADC #10
@@ -420,7 +418,7 @@ NoCarryAjust: ; 3 (0)
     NOP       ; 2 (6)
     NOP       ; 2 (8)
 JmpWithCarry: ; 10
-
+;   Set Next Aliens line
     LDX #11
 SetAliensGrpLoop:
     ROR ALIENS_ATT+6
@@ -429,22 +427,22 @@ SetAliensGrpLoop:
     LDY #<SpritEmpty    ; 2 (4)
     JMP SetAlien        ; 3 (6)
 AlienAlive: ; 3
-    LDA ALIENS_TEMP+1     ; 3 (3)
-    LDY ALIENS_TEMP       ; 3 (6)
+    LDA ALIENS_TEMP+1   ; 3 (3)
+    LDY ALIENS_TEMP     ; 3 (6)
 SetAlien:   ; 9
     STA ALIENS_LINES,X
     DEX
     STY ALIENS_LINES,X
     DEX
     BPL SetAliensGrpLoop
-
+;   Restore Y-Count Scanline
     LDA #15
     CLC
     ADC SCANLINE_COUNT
     TAY
 
     LDX #2
-VertSpaceAliensLoop:
+VertSpaceAliensLoop: ; Consume unused Scanlines between Aliens Lines
     INY
     DEX
     STA WSYNC
@@ -465,8 +463,7 @@ ExitAliens:
     CLC
     ADC SCANLINE_COUNT
     TAY
-
-
+;   Jump if Aliens land (No Print Player)
     CPY #PLAYER_SCAN-3
     BMI PlayerAlive
     LDA #$10
@@ -484,15 +481,16 @@ PlayerAlive:
     LDA #0
     STA VDELP0
     STA VDELP1
+;   Jump if Aliens "destroy" Base Defense
     CPY #DEF_DIST-3
     BPL DefenseIsGone
-
+;   Prepare GRP0 to 3 copies medium to Base Defense drawn
     LDA #6
     STA NUSIZ0
-
+;   Set Color of Base Defense
     LDA #DEFENSE_COLOR
     STA COLUP0
-
+;   Set Position of Base Defense
     LDA #42
     LDX #0
     INY
@@ -798,7 +796,12 @@ CheckBoardLimitsAliens:
 ;=============================================================================================
 ;             				  DATA DECLARATION
 ;=============================================================================================
-;   Player sprite
+;   Numbers Sprite for Score
+    ORG $FE00
+Number0:
+
+
+;   Player, Aliens and Defense Sprites
     ORG $FF00
 SpritEmpty:
     .BYTE #0,#0,#0,#0,#0,#0,#0,#0,#0,#0
