@@ -27,7 +27,7 @@ FLOOR_COLOR         = $E2
 PLAYER_COLOR        = $C4
 RIGHT_LIMIT_COLOR   = $C4
 LEFT_LIMIT_COLOR    = $F6
-ENEMY_COLOR         = $14
+ENEMY_COLOR         = $16
 DEFENSE_COLOR       = $34
 
 ;===================================================================
@@ -35,18 +35,18 @@ DEFENSE_COLOR       = $34
     ELSE
         IF SYSTEM_TV == "PAL"
 
-KERNEL_SCANLINE     = 228
+KERNEL_SCANLINE     = 253 ;228+25
 
 VBLANK_TIMER        = 53
-OVERSCAN_TIMER      = 43
+OVERSCAN_TIMER      = 13
 
 BACK_COLOR          = $00
-FLOOR_COLOR         = $24
-PLAYER_COLOR        = $34
+FLOOR_COLOR         = $26
+PLAYER_COLOR        = $36
 RIGHT_LIMIT_COLOR   = $34
 LEFT_LIMIT_COLOR    = $46
-ENEMY_COLOR         = $2A
-DEFENSE_COLOR       = $F0
+ENEMY_COLOR         = $2C
+DEFENSE_COLOR       = $64
 
 ;===================================================================
 ;                          OTHERS
@@ -59,17 +59,20 @@ DEFENSE_COLOR       = $F0
 ;===================================================================
 ;                       Global Constants
 ;===================================================================
-FLOOR_SCAN  = (KERNEL_SCANLINE-25)
-PLAYER_LEN  = 10
-PLAYER_SCAN = (FLOOR_SCAN-PLAYER_LEN)
-SCORE_SCAN  = 5
-MOVE_SPEED  = 1
-LEFT_LIMIT  = 33
-RIGHT_LIMIT = 122
-ENEMY_DIST  = KERNEL_SCANLINE-191
-DEF_DIST    = PLAYER_SCAN-28
-TAPS        = $B8
-SEED        = 13
+FLOOR_SCAN    = (KERNEL_SCANLINE-25)
+PLAYER_LEN    = 10
+ALIEN_LEN     = 10
+PLAYER_SCAN   = (FLOOR_SCAN-PLAYER_LEN)
+SCORE_SCAN    = 5
+MOVE_SPEED    = 1
+LEFT_LIMIT    = 33
+RIGHT_LIMIT   = 122
+ENEMY_DIST    = KERNEL_SCANLINE-192
+DEF_DIST      = PLAYER_SCAN-28
+ALINES_LIMIT  = PLAYER_SCAN-18*5-15
+LEFT_LIMIT_AL = 22
+TAPS          = $B8
+SEED          = 13
 
 ;===================================================================
 ;===================================================================
@@ -93,16 +96,18 @@ SPRITE_HEIGHT   ds  1   ; Count for Draw Aliens
 ALIENS_ATT      ds  7   ; Alien Status, 7º Pos is TEMP
 ALIENS_TEMP     ds  2   ; Temp PTR Grp Aliens
 ALIENS_LINES    ds  12  ; Alien PTR Grp
-ALIENS_DELAY    ds  2   ; PTR to time ajust to X-pos Aliens
+ALIENS_DELAY    ds  2   ; PTR for time ajust for X-pos Aliens
 ALIENS_NUM      ds  1   ; Number of lines of aliens alive
 ALIENS_COUNT    ds  1   ; Number of current lines of aliens
 SCANLINE_COUNT  ds  1   ; Temp for ajust number of scanline after aliens
 
-LEFT_LIMIT_AL   ds  1   ; Min Position for Aliens Sprite
 RIGHT_LIMIT_AL  ds  1   ; Max Position for Aliens Sprite
+SCAN_LIMIT_AL   ds  1   ; Aliens hit the Ground
 DIRECTION_AL    ds  1   ; Direction of Aliens (0:Left; 1:Right)
 
 DEFENSE_GRP     ds  27  ; Base Defense Shape
+COLUMNS_ALIVE   ds  1   ; Alien columns with at least one alive
+TEMP_ROTATION   ds  1   ; Used to perform rotations and discover blank rows and columns 
 
 ;===================================================================
 ;===================================================================
@@ -117,7 +122,7 @@ DEFENSE_GRP     ds  27  ; Base Defense Shape
 BootGame:
     SEI
     CLD
-
+;   Clear Memory
     LDX #0
     TXS
     TXA
@@ -126,7 +131,6 @@ ClearMemory:
     PHA
     DEX
     BNE ClearMemory
-
 ;   Get Seed for random numbers generation
     LDA INTIM
     BNE NoNULLSeed      ; Check Null Seed (zero)
@@ -159,8 +163,6 @@ SetAttEnemiesLoop:
     STA INVERS_SPEED
     STA FRAME_MASK
 ;   Board Limits of Aliens
-    LDA #22
-    STA LEFT_LIMIT_AL
     LDA #49
     STA RIGHT_LIMIT_AL
 ;   Move Direction (Left, Right)
@@ -175,7 +177,7 @@ LoadDefenseLoop:
     STA DEFENSE_GRP+18,X
     DEX
     BPL LoadDefenseLoop
-
+;   Start VBlank period
     LDA #%01000010      ; Starting Vblank
     STA VBLANK
 
@@ -183,14 +185,14 @@ LoadDefenseLoop:
 ;                         NEW FRAME CYCLE
 ;===================================================================
 StartFrame:
+;   Sync with TV
     LDA #%00001110      ; Vertical sync is signaled by VSYNC's bit 1...
-
 WsynWait:
     STA WSYNC           ; (WSYNC write => wait for end of scanline)
     STA VSYNC
     LSR
     BNE WsynWait
-
+;   Set time for vertical blank period
     LDA #VBLANK_TIMER   ; Timing Vblank Scanlines
     STA TIM64T
 
@@ -202,11 +204,9 @@ WsynWait:
 ;   Reset Back Color
     LDA #BACK_COLOR
     STA COLUBK
-;   Reset Alien Line Numbers
-    LDA #5
-    STA ALIENS_NUM
 ;   Set Direction and position of Aliens Sprites
-    JSR SetSpritesAliens    ; Magic happens here !!!!
+    JSR CheckBoardLimitsAliens ; TEMP
+    JSR SetSpritesAliens       ; Magic happens here !!!!
 ;   Set Based Aliens Grp
     LDA FRAME_MASK
     BNE InverseSprite
@@ -255,7 +255,7 @@ RightMove:
 ;   Check Right move available
     LDA PLAYER_POS
     CMP #(RIGHT_LIMIT-5)
-    BPL NoMove
+    BCS NoMove
     CLC
     ADC #MOVE_SPEED
     STA PLAYER_POS
@@ -264,7 +264,7 @@ LeftMove:
 ;   Check Left move available
     LDA PLAYER_POS
     CMP #(LEFT_LIMIT+1)
-    BMI NoMove
+    BCC NoMove
     SEC
     SBC #MOVE_SPEED
     STA PLAYER_POS
@@ -335,13 +335,13 @@ WaitVblankEnd:
 
     LDA #5
     STA ALIENS_COUNT
-    LDA #9
+    LDA #ALIEN_LEN-1
     STA SPRITE_HEIGHT
 WaitEnemies:
     INY
     STA WSYNC
     CPY ALIENS_SCAN
-    BMI WaitEnemies
+    BCC WaitEnemies
 LoopLines:
     LDX #10
 RelativeLineLoop:
@@ -396,7 +396,7 @@ DrawEnemies:    ; 22-30      0
     SBC #14
     NOP
     BCC NotUseLineAlign
-    .BYTE $EA,$EA,$EA
+    .BYTE $EA,$EA,$EA     
     CMP $80
 NotUseLineAlign:
 ;   Check End of Alines lines
@@ -410,15 +410,7 @@ NotUseLineAlign:
     CLC
     ADC #10
     STA ALIENS_TEMP
-    BCC NoCarryAjust    ; 2 (0)
-    INC ALIENS_TEMP+1   ; 5 (2)
-    JMP JmpWithCarry    ; 3 (7)
-NoCarryAjust: ; 3 (0)
-    CMP $80   ; 3 (3)
-    NOP       ; 2 (6)
-    NOP       ; 2 (8)
-JmpWithCarry: ; 10
-;   Set Next Aliens line
+;   Set Aliens Sprite
     LDX #11
 SetAliensGrpLoop:
     ROR ALIENS_ATT+6
@@ -447,7 +439,7 @@ VertSpaceAliensLoop: ; Consume unused Scanlines between Aliens Lines
     DEX
     STA WSYNC
     BPL VertSpaceAliensLoop
-
+;   Prepare for another loop
     LDA #9
     STA SPRITE_HEIGHT
     LDX #20             ; Delay in RelativeLineLoop
@@ -465,7 +457,7 @@ ExitAliens:
     TAY
 ;   Jump if Aliens land (No Print Player)
     CPY #PLAYER_SCAN-3
-    BMI PlayerAlive
+    BCC PlayerAlive
     LDA #$10
     STA NUSIZ0
     STA NUSIZ1
@@ -484,7 +476,7 @@ PlayerAlive:
 ;   Jump if Aliens "destroy" Base Defense
     CPY #DEF_DIST-3
     BPL DefenseIsGone
-;   Prepare GRP0 to 3 copies medium to Base Defense drawn
+;   Prepare GRP0 for 3 copies medium for Base Defense drawn
     LDA #6
     STA NUSIZ0
 ;   Set Color of Base Defense
@@ -502,25 +494,25 @@ PlayerAlive:
 
 WaitDefense:
     INY
-    STA WSYNC                 
-    CPY #DEF_DIST             
-    BMI WaitDefense
+    STA WSYNC
+    CPY #DEF_DIST
+    BCC WaitDefense
 
     STY SCANLINE_COUNT
-    LDX #0          
+    LDX #0
 DrawDefenseLoop:
-    .BYTE $48,$68,$48,$68           ; 2 par of PHA PLA (14 Cycles Wasted)
-    .BYTE $EA,$EA                   ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
-    LDA DEFENSE_GRP,X 
-    STA GRP0            
-    .BYTE $EA,$EA                   ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
-    LDA DEFENSE_GRP+9,X    
-    STA GRP0             
-    .BYTE $EA,$EA                   ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
-    LDA DEFENSE_GRP+18,X    
-    STA GRP0   
-    .BYTE $48,$68                   ; 1 par of PHA PLA -> 7 Cycles Wasted -> 21 Color Clock
-    .BYTE $EA,$EA,$EA,$EA,$EA       ; 5 NOP -> 10 Cycles Wasted -> 30 Color Clock
+    .BYTE $48,$68,$48,$68       ; 2 par of PHA PLA (14 Cycles Wasted)
+    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
+    LDA DEFENSE_GRP,X
+    STA GRP0
+    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
+    LDA DEFENSE_GRP+9,X
+    STA GRP0
+    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
+    LDA DEFENSE_GRP+18,X
+    STA GRP0
+    .BYTE $48,$68               ; 1 par of PHA PLA -> 7 Cycles Wasted -> 21 Color Clock
+    .BYTE $EA,$EA,$EA,$EA,$EA   ; 5 NOP -> 10 Cycles Wasted -> 30 Color Clock
     LDY #13
 SkipOneLine:
     DEY
@@ -529,12 +521,12 @@ SkipOneLine:
     INC SCANLINE_COUNT
     INX
     CPX #9
-    BMI DrawDefenseLoop
+    BNE DrawDefenseLoop
 
     LDA #0
     STA GRP0
 
-    LDY SCANLINE_COUNT 
+    LDY SCANLINE_COUNT
 
 DefenseIsGone:
 
@@ -547,7 +539,7 @@ WaitPlayer:
     INY
     STA WSYNC
     CPY #PLAYER_SCAN-2
-    BMI WaitPlayer
+    BCC WaitPlayer
     INY
     STA WSYNC
     STA HMOVE
@@ -570,7 +562,7 @@ DrawPlayer:
     STA GRP0
     INY
     CPY #PLAYER_LEN
-    BMI DrawPlayer
+    BNE DrawPlayer
     TXA
     TAY
 PlayerDeadJmp:
@@ -633,7 +625,7 @@ ScanlineEnd:
     INY
     STA WSYNC
     CPY #KERNEL_SCANLINE
-    BMI ScanlineEnd
+    BCC ScanlineEnd
 
 ;=============================================================================================
 ;=============================================================================================
@@ -668,7 +660,7 @@ Overscan:
 ;                                 END OVERSCAN
 ;=============================================================================================
 ;   Wait Rest of Existing OverScan (Async Clock)
-WaitOverscanEnd:           ; Timing OverScanlines
+WaitOverscanEnd:            ; Timing OverScanlines
     LDA INTIM
     BNE WaitOverscanEnd
     JMP StartFrame          ; Back to Start
@@ -738,6 +730,9 @@ AjustDelayCarry:
 OutAjust:
     RTS
 
+;FUNCTION SetSpritesAliens
+;
+;
 SetSpritesAliens:
     LDA FRAME_COUNT
     AND INVERS_SPEED
@@ -757,32 +752,39 @@ AliensMoveForward:
     LDA ALIENS_POS
     SEC
     SBC #1
-    CMP LEFT_LIMIT_AL
-    BMI ReverseDirection
+    CMP #LEFT_LIMIT_AL
+    BCC ReverseDirection
     STA ALIENS_POS
 PosMove:
     ;   Set Delay Time for draw aliens
     JMP AjustDelayAliens    ; Caution !! Use Trick Change JSR to JMP
     ; No code HERE!
 SetOut:
+    ; No code HERE!
     RTS
 
 ReverseDirection:
     LDA ALIENS_SCAN
     CLC
-    ADC #8
+    ADC #10
     STA ALIENS_SCAN
-    CMP #82
-    BMI NoEndGame
-    ; LDA #ENEMY_DIST
-    ; STA ALIENS_SCAN
-    ; LDA #22
-    ; STA ALIENS_POS
-    ; LDA #$FF
-    ; STA DIRECTION_AL
-    CLC
-    ADC #6
+    CMP SCAN_LIMIT_AL
+    BCC NoEndGame
+
+    LDA #FLOOR_SCAN
+    LDX ALIENS_NUM
+    BEQ AjustEndScan
+AjustEndScanLoop:
+    SEC
+    SBC #18
+    DEX
+    BNE AjustEndScanLoop
+
+AjustEndScan:
+    SEC
+    SBC #14
     STA ALIENS_SCAN
+
     LDA #0
     STA INVERS_SPEED
 NoEndGame:
@@ -791,8 +793,95 @@ NoEndGame:
     STA DIRECTION_AL
     JMP SetSpritesAliens
 
+;FUNCTION CheckBoardLimitsAliens
+;
+;
 CheckBoardLimitsAliens:
+    LDX #4
+    LDA ALIENS_ATT+5
+CheckLimitsLoop:
+    ORA ALIENS_ATT,X
+    DEX
+    BPL CheckLimitsLoop
+    CMP COLUMNS_ALIVE
+    BEQ NoChange
+    STA COLUMNS_ALIVE
+    STA TEMP_ROTATION
+
+    LDA #49
+    STA RIGHT_LIMIT_AL
+
+    LDX #5
+BoardRightLimitLoop:
+    ROR TEMP_ROTATION
+    BCS CheckLeftLimit
+    ADC #16
+    STA RIGHT_LIMIT_AL
+    DEX
+    BPL BoardRightLimitLoop
+
+CheckLeftLimit:
+    LDA COLUMNS_ALIVE
+    STA TEMP_ROTATION
+    ROL TEMP_ROTATION
+    ROL TEMP_ROTATION
+
+    ROL TEMP_ROTATION
+    BCS NoChange
+
+    LDY #4
+BoardLeftLimitLoop:
+
+    LDX #5
+ShiftAlines:
+    ROL ALIENS_ATT,X
+    DEX
+    BPL ShiftAlines
+
+    LDA ALIENS_POS
+    CLC
+    ADC #16
+    STA ALIENS_POS
+    
+    ROL TEMP_ROTATION
+    BCS ApplyMove
+    
+    DEY
+    BPL BoardLeftLimitLoop
+
+ApplyMove:
+    LDX #0
+    LDA ALIENS_POS
+    JSR AjustDelayAliens    
+    LDA ALIENS_POS
+    CLC
+    ADC #16
+    LDX #1
+    JMP AjustDelayAliens  ; Trick 
+
+NoChange:
+
+;   Set Base Hit Y-Ground (Relative to first line)
+    LDA #ALINES_LIMIT
+    STA SCAN_LIMIT_AL
+    ;   Reset Alien Line Numbers
+    LDA #5
+    STA ALIENS_NUM
+    LDX #0
+CheckUnderLimit:
+    LDA ALIENS_ATT,X
+    BNE NoUnderChange
+    LDA SCAN_LIMIT_AL
+    CLC
+    ADC #18
+    STA SCAN_LIMIT_AL
+    DEC ALIENS_NUM
+    INX
+    CPX #6
+    BNE CheckUnderLimit
+NoUnderChange:
     RTS
+
 ;=============================================================================================
 ;             				  DATA DECLARATION
 ;=============================================================================================
