@@ -106,8 +106,9 @@ SCAN_LIMIT_AL   ds  1   ; Aliens hit the Ground
 DIRECTION_AL    ds  1   ; Direction of Aliens (0:Left; 1:Right)
 
 DEFENSE_GRP     ds  27  ; Base Defense Shape
+DEFENSE_POS     ds  1   ; Base Defense X-Pos
 COLUMNS_ALIVE   ds  1   ; Alien columns with at least one alive
-TEMP_ROTATION   ds  1   ; Used to perform rotations and discover blank rows and columns 
+TEMP_ROTATION   ds  1   ; Used to perform rotations and discover blank rows and columns
 
 ;===================================================================
 ;===================================================================
@@ -177,6 +178,11 @@ LoadDefenseLoop:
     STA DEFENSE_GRP+18,X
     DEX
     BPL LoadDefenseLoop
+;   Set X-Pos Base Defense
+    LDA #42 ;42
+    STA DEFENSE_POS
+;   Set PTR of Base Defense Delay
+
 ;   Start VBlank period
     LDA #%01000010      ; Starting Vblank
     STA VBLANK
@@ -205,7 +211,7 @@ WsynWait:
     LDA #BACK_COLOR
     STA COLUBK
 ;   Set Direction and position of Aliens Sprites
-    JSR CheckBoardLimitsAliens ; TEMP
+    JSR CheckBoardLimitsAliens
     JSR SetSpritesAliens       ; Magic happens here !!!!
 ;   Set Based Aliens Grp
     LDA FRAME_MASK
@@ -344,9 +350,9 @@ WaitEnemies:
     BCC WaitEnemies
 LoopLines:
     LDX #10
-RelativeLineLoop:
+RelativeDelayAliensLoop:
     DEX
-    BPL RelativeLineLoop
+    BPL RelativeDelayAliensLoop
     NOP
     STY SCANLINE_COUNT
     JMP (ALIENS_DELAY)
@@ -396,7 +402,7 @@ DrawEnemies:    ; 22-30      0
     SBC #14
     NOP
     BCC NotUseLineAlign
-    .BYTE $EA,$EA,$EA     
+    .BYTE $EA,$EA,$EA
     CMP $80
 NotUseLineAlign:
 ;   Check End of Alines lines
@@ -434,7 +440,7 @@ SetAlien:   ; 9
     TAY
 
     LDX #2
-VertSpaceAliensLoop: ; Consume unused Scanlines between Aliens Lines
+VertSpaceAliensLoop:    ; Consume unused Scanlines between Aliens Lines
     INY
     DEX
     STA WSYNC
@@ -442,15 +448,17 @@ VertSpaceAliensLoop: ; Consume unused Scanlines between Aliens Lines
 ;   Prepare for another loop
     LDA #9
     STA SPRITE_HEIGHT
-    LDX #20             ; Delay in RelativeLineLoop
+    LDX #20             ; Delay in RelativeDelayAliensLoop
     CMP $80
     LDA #6
     STA NUSIZ0
     STA NUSIZ1
     DEC ALIENS_COUNT
     DEC ALIENS_NUM
-    JMP RelativeLineLoop
+    JMP RelativeDelayAliensLoop
 ExitAliens:
+
+
     LDA #13
     CLC
     ADC SCANLINE_COUNT
@@ -462,6 +470,7 @@ ExitAliens:
     STA NUSIZ0
     STA NUSIZ1
     STA WSYNC
+    
     LDX #2
 PlayerDeadAjustScan:
     DEX
@@ -483,7 +492,7 @@ PlayerAlive:
     LDA #DEFENSE_COLOR
     STA COLUP0
 ;   Set Position of Base Defense
-    LDA #42
+    LDA DEFENSE_POS
     LDX #0
     INY
     JSR SetHorizPos
@@ -495,28 +504,50 @@ PlayerAlive:
 WaitDefense:
     INY
     STA WSYNC
-    CPY #DEF_DIST
+    CPY #DEF_DIST-1
     BCC WaitDefense
 
     STY SCANLINE_COUNT
+    LDY #13
+RelativeDelayDefenseLoop:
+    DEY
+    BPL RelativeDelayDefenseLoop
+    CMP $80
+    NOP
+    NOP
     LDX #0
 DrawDefenseLoop:
     .BYTE $48,$68,$48,$68       ; 2 par of PHA PLA (14 Cycles Wasted)
-    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
     LDA DEFENSE_GRP,X
     STA GRP0
-    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
+    NOP
+    NOP
     LDA DEFENSE_GRP+9,X
     STA GRP0
-    .BYTE $EA,$EA               ; 2 NOP -> 4 Cycles Wasted -> 12 Color Clock
+    NOP
+    NOP
     LDA DEFENSE_GRP+18,X
     STA GRP0
-    .BYTE $48,$68               ; 1 par of PHA PLA -> 7 Cycles Wasted -> 21 Color Clock
-    .BYTE $EA,$EA,$EA,$EA,$EA   ; 5 NOP -> 10 Cycles Wasted -> 30 Color Clock
-    LDY #13
-SkipOneLine:
+
+    LDY #7
+DelayDefenseLoop:
     DEY
-    BPL SkipOneLine
+    BPL DelayDefenseLoop
+    CMP $80
+    CMP $80
+
+    LDA DEFENSE_GRP,X
+    STA GRP0
+    NOP
+    NOP
+    LDA DEFENSE_GRP+9,X
+    STA GRP0
+    NOP
+    NOP
+    LDA DEFENSE_GRP+18,X
+    STA GRP0
+    .BYTE $48,$68,$48,$68       ; 2 par of PHA PLA -> 14 Cycles Wasted -> 42 Color Clock
+    NOP
     INC SCANLINE_COUNT
     INC SCANLINE_COUNT
     INX
@@ -525,7 +556,7 @@ SkipOneLine:
 
     LDA #0
     STA GRP0
-
+    INC SCANLINE_COUNT
     LDY SCANLINE_COUNT
 
 DefenseIsGone:
@@ -804,7 +835,7 @@ CheckLimitsLoop:
     DEX
     BPL CheckLimitsLoop
     CMP COLUMNS_ALIVE
-    BEQ NoChange
+    BEQ NoRLimitChange
     STA COLUMNS_ALIVE
     STA TEMP_ROTATION
 
@@ -827,11 +858,10 @@ CheckLeftLimit:
     ROL TEMP_ROTATION
 
     ROL TEMP_ROTATION
-    BCS NoChange
+    BCS NoRLimitChange
 
     LDY #4
 BoardLeftLimitLoop:
-
     LDX #5
 ShiftAlines:
     ROL ALIENS_ATT,X
@@ -842,25 +872,24 @@ ShiftAlines:
     CLC
     ADC #16
     STA ALIENS_POS
-    
+
     ROL TEMP_ROTATION
     BCS ApplyMove
-    
+
     DEY
     BPL BoardLeftLimitLoop
 
 ApplyMove:
     LDX #0
     LDA ALIENS_POS
-    JSR AjustDelayAliens    
+    JSR AjustDelayAliens
     LDA ALIENS_POS
     CLC
     ADC #16
     LDX #1
-    JMP AjustDelayAliens  ; Trick 
-
-NoChange:
-
+    JSR AjustDelayAliens  ; Trick JSR embedded inside JMP
+;   Any code entered here will not be executed!
+NoRLimitChange:
 ;   Set Base Hit Y-Ground (Relative to first line)
     LDA #ALINES_LIMIT
     STA SCAN_LIMIT_AL
