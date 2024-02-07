@@ -469,6 +469,11 @@ ExitAliens:
     LDA #$10
     STA NUSIZ0
     STA NUSIZ1
+    LDA ALIENS_POS
+    CMP #95
+    BCC SyncScanEndGame
+    INY
+SyncScanEndGame:
     STA WSYNC
     
     LDX #2
