@@ -86,6 +86,7 @@ RANDOM_NUMBER   ds  1   ; Random Number :)
 FRAME_COUNT     ds  1   ; Frame Count
 INVERS_SPEED    ds  1   ; Mask to frame invert aliens
 FRAME_MASK      ds  1   ; Select reverse or original Aliens sprites
+SCANLINE_COUNT  ds  1   ; Temp for ajust number of scanline after aliens
 
 PLAYER_POS      ds  1   ; Player X-pos
 PLAYER_GRP      ds  2   ; Player PTR Grp
@@ -93,13 +94,17 @@ PLAYER_GRP      ds  2   ; Player PTR Grp
 ALIENS_POS      ds  1   ; Alien X-pos (Further to the left)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
 SPRITE_HEIGHT   ds  1   ; Count for Draw Aliens
+
 ALIENS_ATT      ds  7   ; Alien Status, 7º Pos is TEMP
-ALIENS_TEMP     ds  2   ; Temp PTR Grp Aliens
+COLUMNS_ALIVE   ds  1   ; Alien columns with at least one alive
+TEMP_ROTATION   ds  1   ; Used to perform rotations and discover blank rows and columns
+
 ALIENS_LINES    ds  12  ; Alien PTR Grp
+ALIENS_TEMP     ds  2   ; Temp PTR Grp Aliens
+
 ALIENS_DELAY    ds  2   ; PTR for time ajust for X-pos Aliens
 ALIENS_NUM      ds  1   ; Number of lines of aliens alive
 ALIENS_COUNT    ds  1   ; Number of current lines of aliens
-SCANLINE_COUNT  ds  1   ; Temp for ajust number of scanline after aliens
 
 RIGHT_LIMIT_AL  ds  1   ; Max Position for Aliens Sprite
 SCAN_LIMIT_AL   ds  1   ; Aliens hit the Ground
@@ -107,8 +112,6 @@ DIRECTION_AL    ds  1   ; Direction of Aliens (0:Left; 1:Right)
 
 DEFENSE_GRP     ds  27  ; Base Defense Shape
 DEFENSE_POS     ds  1   ; Base Defense X-Pos
-COLUMNS_ALIVE   ds  1   ; Alien columns with at least one alive
-TEMP_ROTATION   ds  1   ; Used to perform rotations and discover blank rows and columns
 
 ;===================================================================
 ;===================================================================
@@ -181,7 +184,6 @@ LoadDefenseLoop:
 ;   Set X-Pos Base Defense
     LDA #42 ;42
     STA DEFENSE_POS
-;   Set PTR of Base Defense Delay
 
 ;   Start VBlank period
     LDA #%01000010      ; Starting Vblank
@@ -291,7 +293,7 @@ WaitVblankEnd:
     BNE WaitVblankEnd
 
 ;   Register Y for Count Hot Scanlines
-    TAY
+    TAY ; A:=0 -> Y
     STA WSYNC
 ;   Apply Moves in Buffers
     STA HMOVE
@@ -339,21 +341,19 @@ WaitVblankEnd:
     STA VDELP0
     STA VDELP1
 
-    LDA #5
-    STA ALIENS_COUNT
-    LDA #ALIEN_LEN-1
-    STA SPRITE_HEIGHT
 WaitEnemies:
     INY
     STA WSYNC
     CPY ALIENS_SCAN
     BCC WaitEnemies
 LoopLines:
-    LDX #10
+    LDX #9
 RelativeDelayAliensLoop:
     DEX
     BPL RelativeDelayAliensLoop
     NOP
+    LDA #ALIEN_LEN-1
+    STA SPRITE_HEIGHT
     STY SCANLINE_COUNT
     JMP (ALIENS_DELAY)
 JmpDelay:
@@ -446,8 +446,6 @@ VertSpaceAliensLoop:    ; Consume unused Scanlines between Aliens Lines
     STA WSYNC
     BPL VertSpaceAliensLoop
 ;   Prepare for another loop
-    LDA #9
-    STA SPRITE_HEIGHT
     LDX #20             ; Delay in RelativeDelayAliensLoop
     CMP $80
     LDA #6
@@ -470,12 +468,12 @@ ExitAliens:
     STA NUSIZ0
     STA NUSIZ1
     LDA ALIENS_POS
-    CMP #95
+    CMP #25
     BCC SyncScanEndGame
     INY
 SyncScanEndGame:
     STA WSYNC
-    
+
     LDX #2
 PlayerDeadAjustScan:
     DEX
@@ -483,6 +481,8 @@ PlayerDeadAjustScan:
     NOP
     NOP
     JMP PlayerDeadJmp
+
+    
 PlayerAlive:
     LDA #0
     STA VDELP0
@@ -559,6 +559,7 @@ DelayDefenseLoop:
     CPX #9
     BNE DrawDefenseLoop
 
+
     LDA #0
     STA GRP0
     INC SCANLINE_COUNT
@@ -601,6 +602,8 @@ DrawPlayer:
     BNE DrawPlayer
     TXA
     TAY
+
+
 PlayerDeadJmp:
 ;   Missele 0 color
     LDA #RIGHT_LIMIT_COLOR
@@ -794,9 +797,9 @@ AliensMoveForward:
 PosMove:
     ;   Set Delay Time for draw aliens
     JMP AjustDelayAliens    ; Caution !! Use Trick Change JSR to JMP
-    ; No code HERE!
+    ;   Any code entered here or below will not be executed!
 SetOut:
-    ; No code HERE!
+    ;   Caution if need code here !!
     RTS
 
 ReverseDirection:
@@ -892,8 +895,8 @@ ApplyMove:
     CLC
     ADC #16
     LDX #1
-    JSR AjustDelayAliens  ; Trick JSR embedded inside JMP
-;   Any code entered here will not be executed!
+    JSR AjustDelayAliens
+
 NoRLimitChange:
 ;   Set Base Hit Y-Ground (Relative to first line)
     LDA #ALINES_LIMIT
@@ -901,6 +904,7 @@ NoRLimitChange:
     ;   Reset Alien Line Numbers
     LDA #5
     STA ALIENS_NUM
+    STA ALIENS_COUNT
     LDX #0
 CheckUnderLimit:
     LDA ALIENS_ATT,X
