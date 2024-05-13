@@ -59,20 +59,20 @@ DEFENSE_COLOR       = $64
 ;===================================================================
 ;                       Global Constants
 ;===================================================================
-FLOOR_SCAN    = (KERNEL_SCANLINE-25)
-PLAYER_LEN    = 10
-ALIEN_LEN     = 10
-PLAYER_SCAN   = (FLOOR_SCAN-PLAYER_LEN)
-SCORE_SCAN    = 5
-MOVE_SPEED    = 1
-LEFT_LIMIT    = 33
-RIGHT_LIMIT   = 122
-ENEMY_DIST    = KERNEL_SCANLINE-192
-DEF_DIST      = PLAYER_SCAN-28
-ALINES_LIMIT  = PLAYER_SCAN-18*5-15
-LEFT_LIMIT_AL = 22
-TAPS          = $B8
-SEED          = 13
+FLOOR_SCAN     = (KERNEL_SCANLINE-25)
+PLAYER_LEN     = 10
+ALIEN_LEN      = 10
+PLAYER_SCAN    = (FLOOR_SCAN-PLAYER_LEN)
+SCORE_SCAN     = 5
+MOVE_SPEED     = 1
+LEFT_LIMIT_PL  = 33
+RIGHT_LIMIT_PL = 122
+ENEMY_DIST     = KERNEL_SCANLINE-192
+DEF_DIST       = PLAYER_SCAN-28
+ALINES_LIMIT   = PLAYER_SCAN-18*5-15
+LEFT_LIMIT_AL  = 22
+TAPS           = $B8
+SEED           = 13
 
 ;===================================================================
 ;===================================================================
@@ -84,12 +84,24 @@ SEED          = 13
 RANDOM_NUMBER   ds  1   ; Random Number :)
 
 FRAME_COUNT     ds  1   ; Frame Count
-INVERS_SPEED    ds  1   ; Mask to frame invert aliens
+ALIENS_SPEED    ds  1   ; Mask to frame invert/move aliens
 FRAME_MASK      ds  1   ; Select reverse or original Aliens sprites
 SCANLINE_COUNT  ds  1   ; Temp for ajust number of scanline after aliens
 
 PLAYER_POS      ds  1   ; Player X-pos
 PLAYER_GRP      ds  2   ; Player PTR Grp
+
+MSL_POS         ds  3   ; Player, Alien1, Alien2 X-pos
+MSL_SCAN        ds  3   ; Player, Alien1, Alien2 Y-pos
+MSL_ATT         ds  1   ; Missels Status
+;      MSL_ATT DECODER
+;   Bit            Status
+;
+;    7          Player Missile
+;    6         Alien 1º Missile
+;    5         Alien 2º Missile
+;
+;   0-2      Current Missile Draw   P:2,A1:1,A2:0
 
 ALIENS_POS      ds  1   ; Alien X-pos (Further to the left)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
@@ -152,6 +164,14 @@ NoNULLSeed:
 ;   Aliens X-Pos set
     LDA #22
     STA ALIENS_POS
+    LDX #0
+    LDA ALIENS_POS
+    JSR AjustDelayAliens
+    LDX #1
+    LDA ALIENS_POS
+    CLC
+    ADC #16
+    JSR AjustDelayAliens
 ;   Aliens Y-Pos set
     LDA #ENEMY_DIST
     STA ALIENS_SCAN
@@ -164,7 +184,7 @@ SetAttEnemiesLoop:
     BPL SetAttEnemiesLoop ; Jmp if x >= 0
 ;   Speed Move Aliens set
     LDA #%00100000
-    STA INVERS_SPEED
+    STA ALIENS_SPEED
     STA FRAME_MASK
 ;   Board Limits of Aliens
     LDA #49
@@ -182,7 +202,7 @@ LoadDefenseLoop:
     DEX
     BPL LoadDefenseLoop
 ;   Set X-Pos Base Defense
-    LDA #42 ;42
+    LDA #42
     STA DEFENSE_POS
 
 ;   Start VBlank period
@@ -262,7 +282,7 @@ SetAlienL1:
 RightMove:
 ;   Check Right move available
     LDA PLAYER_POS
-    CMP #(RIGHT_LIMIT-5)
+    CMP #(RIGHT_LIMIT_PL-5)
     BCS NoMove
     CLC
     ADC #MOVE_SPEED
@@ -271,7 +291,7 @@ RightMove:
 LeftMove:
 ;   Check Left move available
     LDA PLAYER_POS
-    CMP #(LEFT_LIMIT+1)
+    CMP #(LEFT_LIMIT_PL+1)
     BCC NoMove
     SEC
     SBC #MOVE_SPEED
@@ -482,7 +502,7 @@ PlayerDeadAjustScan:
     NOP
     JMP PlayerDeadJmp
 
-    
+
 PlayerAlive:
     LDA #0
     STA VDELP0
@@ -724,10 +744,13 @@ NoEOR:
     RTS
 
 ;FUNCTION SetHorizPos (A,X)
+;   Where X Represents Values F​for Player X (X Equal 0 or 1)
+;   Where A Contains the Color Clock Value of the Object on the Screen (Column Position of Object)
 ;
-;
-SetHorizPos
-	STA WSYNC	    ; (0)
+;   Function With Extreme Precision of Time Consumption and Triggering of Object Position Recorders, 
+; With the Same Value as Register A.
+SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
+	STA WSYNC	    ; 0 (0)
     BIT 0		    ; 3 (6)
 	SEC		        ; 2 (15)
 DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minimum consumption is 4 cycles and the maximum is 59 cycles
@@ -742,10 +765,13 @@ DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minim
 	STA HMP0,X
 	RTS
 
-;FUNCTION AjustDelayAliens()
-;
+;FUNCTION AjustDelayAliens(None)
+;   Adjusts the Jump Address of the 'ALIENS_DELAY' Variable
+; Taking the Position of the Object on the Screen as a Criterion, 
+; This Serves to Keep the Swap Time Between GPR0 and GPR1 Viable, Keeping the Positioning Aligned
 ;
 AjustDelayAliens:
+;   Default Set of High and Low Addresses
     LDA #<DrawEnemies
     STA ALIENS_DELAY
     LDA #>DrawEnemies
@@ -754,6 +780,7 @@ AjustDelayAliens:
     SEC
     SBC #31
     BCC OutAjust
+;   Balance as Needed
 AjustDelayLoop:
     TAX
     LDA ALIENS_DELAY
@@ -762,7 +789,7 @@ AjustDelayLoop:
     BCS AjustDelayCarry
     DEC ALIENS_DELAY+1
     SEC
-AjustDelayCarry:
+AjustDelayCarry:    ; Check Carry From Low to High Addresses
     TXA
     SBC #9
     BCS AjustDelayLoop
@@ -770,16 +797,20 @@ OutAjust:
     RTS
 
 ;FUNCTION SetSpritesAliens
-;
+;   This Function Will Detect the Passage of Time Through Frame Counting, 
+; Making the Aliens Move Horizontally and Treating the Vertical Descent 
+; When It Reaches the Side Limits
 ;
 SetSpritesAliens:
     LDA FRAME_COUNT
-    AND INVERS_SPEED
+    AND ALIENS_SPEED
     CMP FRAME_MASK
     BEQ SetOut
-    STA FRAME_MASK  ; Inverted Sprites
+    STA FRAME_MASK  
+;   Sprite Move
     LDA DIRECTION_AL
     BNE AliensMoveForward
+;   AliensMoveBackward
     LDA ALIENS_POS
     CLC
     ADC #1
@@ -795,21 +826,23 @@ AliensMoveForward:
     BCC ReverseDirection
     STA ALIENS_POS
 PosMove:
-    ;   Set Delay Time for draw aliens
+;   Set Delay Time for draw aliens
     JMP AjustDelayAliens    ; Caution !! Use Trick Change JSR to JMP
-    ;   Any code entered here or below will not be executed!
+;   Any code entered here or below will not be executed!
 SetOut:
-    ;   Caution if need code here !!
+;   Caution if need code here !!
     RTS
-
-ReverseDirection:
+;   
+ReverseDirection: ; Treats vertical displacement of aliens
     LDA ALIENS_SCAN
     CLC
     ADC #10
     STA ALIENS_SCAN
+;   Vertical limit check (end of game, collision with player/ground)
     CMP SCAN_LIMIT_AL
     BCC NoEndGame
-
+;   Collision with player/ground
+;   Landing adjustments (no bugs and flick scan on landing)
     LDA #FLOOR_SCAN
     LDX ALIENS_NUM
     BEQ AjustEndScan
@@ -818,38 +851,42 @@ AjustEndScanLoop:
     SBC #18
     DEX
     BNE AjustEndScanLoop
-
 AjustEndScan:
     SEC
     SBC #14
     STA ALIENS_SCAN
-
+;   Stop moving Sprites (Move Speed ​​Zero)
     LDA #0
-    STA INVERS_SPEED
+    STA ALIENS_SPEED
 NoEndGame:
+;   Aliens direction swap
     LDA DIRECTION_AL
     EOR #$FF
     STA DIRECTION_AL
-    JMP SetSpritesAliens
+    RTS
 
 ;FUNCTION CheckBoardLimitsAliens
-;
+;   This Function Will Check Empty Side Columns, 
+; If You Think It Will Adjust The Aliens' Movement Limits,
+; Always Keeping The First Column And Line As Relative To The Movement
 ;
 CheckBoardLimitsAliens:
     LDX #4
     LDA ALIENS_ATT+5
-CheckLimitsLoop:
+CheckColumnsLoop:           ; Check Empty Columns
     ORA ALIENS_ATT,X
     DEX
-    BPL CheckLimitsLoop
+    BPL CheckColumnsLoop
+;   Checks Change From Previous State (Some Column Was killed in This Time Interval)
     CMP COLUMNS_ALIVE
-    BEQ NoRLimitChange
+    BEQ SetVerticalLimit    ; If There are no Changes, Branch !
+;   Backup to Memory
     STA COLUMNS_ALIVE
     STA TEMP_ROTATION
-
+;   Standard Limit of Aliens to the Right
     LDA #49
     STA RIGHT_LIMIT_AL
-
+;   Increases Right Limit (Without the presence of Columns in Right)
     LDX #5
 BoardRightLimitLoop:
     ROR TEMP_ROTATION
@@ -858,16 +895,16 @@ BoardRightLimitLoop:
     STA RIGHT_LIMIT_AL
     DEX
     BPL BoardRightLimitLoop
-
+;   Prepare to Check Columns to the Left
 CheckLeftLimit:
     LDA COLUMNS_ALIVE
+    ROL
+    ROL 
+    ROL
     STA TEMP_ROTATION
-    ROL TEMP_ROTATION
-    ROL TEMP_ROTATION
-
-    ROL TEMP_ROTATION
-    BCS NoRLimitChange
-
+;   If First Column Exists, Branch !
+    BCS SetVerticalLimit
+;   Move Aliens From Each Column Until There is at Least 1 Alien in the First Column (Column Existence Condition)
     LDY #4
 BoardLeftLimitLoop:
     LDX #5
@@ -875,47 +912,38 @@ ShiftAlines:
     ROL ALIENS_ATT,X
     DEX
     BPL ShiftAlines
-
+;   After Displacement Reposition the Aliens (Same Absolute Position on the Screen)
     LDA ALIENS_POS
     CLC
     ADC #16
     STA ALIENS_POS
-
+;   Continue Until the Column Exists
     ROL TEMP_ROTATION
-    BCS ApplyMove
-
+    BCS SetVerticalLimit
     DEY
     BPL BoardLeftLimitLoop
-
-ApplyMove:
-    LDX #0
-    LDA ALIENS_POS
-    JSR AjustDelayAliens
-    LDA ALIENS_POS
-    CLC
-    ADC #16
-    LDX #1
-    JSR AjustDelayAliens
-
-NoRLimitChange:
-;   Set Base Hit Y-Ground (Relative to first line)
+;   Set the Vertical Limit (Maximum Descent of the First Row, Which is the Highest on the Screen)
+SetVerticalLimit:
+;   Set Default Base Hit Y-Ground (Relative to first line)
     LDA #ALINES_LIMIT
     STA SCAN_LIMIT_AL
-    ;   Reset Alien Line Numbers
+;   Reset Alien Line Numbers
     LDA #5
     STA ALIENS_NUM
     STA ALIENS_COUNT
+;   Loop to Check Empty Lines Below
     LDX #0
 CheckUnderLimit:
-    LDA ALIENS_ATT,X
+    LDA ALIENS_ATT,X    ; From the Lowest on the Screen to the Highest
     BNE NoUnderChange
+;   If it does Not Exist, it Increases the Maximum Line Descent Limit
     LDA SCAN_LIMIT_AL
     CLC
     ADC #18
     STA SCAN_LIMIT_AL
-    DEC ALIENS_NUM
+    DEC ALIENS_NUM      ; Decrement the Count of "Live" Lines
     INX
-    CPX #6
+    CPX #6              ; Repeat for All Rows
     BNE CheckUnderLimit
 NoUnderChange:
     RTS
