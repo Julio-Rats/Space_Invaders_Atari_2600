@@ -106,11 +106,9 @@ ALIENS_SCAN     ds  1   ; Alien Y-pos
 ALIENS_SPEED    ds  1   ; Frames Need to Move Aliens
 ALIENS_MASK     ds  1   ; Select Reverse or Original (Right or Left) Aliens Sprites
 
-SPRITE_HEIGHT   ds  1   ; Count for Draw Aliens
-
-ALIENS_ATT      ds  7   ; Alien Status, 7º Pos is TEMP
-COLUMNS_ALIVE   ds  1   ; Alien Columns with at Least One Alive
-TEMP_ROTATION   ds  1   ; Used to Rotations and Discover Blank Columns
+ALIENS_ATT      ds  6   ; Alien Status (bit 0 to 5, Alive Alien := 1)
+COLUMNS_ALIVE   ds  1   ; Columns of Living Aliens in the Previous Frame
+ATT_ROTATION    ds  1   ; Used to Rotations ATT Alines and Used as Generic Temporary
 
 ALIENS_LINES    ds  12  ; Alien PTR GRP
 ALIENS_TEMP     ds  2   ; Temp PTR GRP Aliens
@@ -182,7 +180,7 @@ NoNULLSeed:
 SetAttEnemiesLoop:
     STA ALIENS_ATT,X
     DEX
-    BPL SetAttEnemiesLoop ; Jmp if x >= 0
+    BPL SetAttEnemiesLoop ; Branch if x >= 0
 ;   Speed Move Aliens set
     LDA #%00100000
     STA ALIENS_SPEED
@@ -251,10 +249,10 @@ LoadTempSprite:
     STY ALIENS_TEMP
 ;   Set First Line of Aliens
     LDA ALIENS_ATT+5
-    STA ALIENS_ATT+6
+    STA ATT_ROTATION
     LDX #11
 SetAliensL1GrpLoop
-    ROR ALIENS_ATT+6
+    ROR ATT_ROTATION
     BCS AlienL1Alive
     LDA #>SpritEmpty
     LDY #<SpritEmpty
@@ -371,10 +369,10 @@ LoopLines:
 RelativeDelayAliensLoop:
     DEX
     BPL RelativeDelayAliensLoop
+    CMP $80
     NOP
-    LDA #ALIEN_LEN-1
-    STA SPRITE_HEIGHT
     STY SCANLINE_COUNT
+    LDY #ALIEN_LEN-1
     JMP (ALIENS_DELAY)
 JmpDelay:       ; Aliens Position  /  Relative Byte Code Jump
     CMP $80     ; 121-129   -22
@@ -389,7 +387,7 @@ JmpDelay:       ; Aliens Position  /  Relative Byte Code Jump
     CMP $80     ; 40-48     -4
     CMP $80     ; 31-39     -2
 DrawEnemies:    ; 22-30      0
-    LDY SPRITE_HEIGHT
+    CMP $80
     LDA (ALIENS_LINES+10),Y
     TAX
     LDA (ALIENS_LINES),Y
@@ -405,7 +403,8 @@ DrawEnemies:    ; 22-30      0
     STX GRP1
     STX GRP0
     .BYTE $EA,$EA,$EA,$EA,$EA,$EA ; 6 NOP -> 12 Cycles Wasted -> 36 Color Clock
-    DEC SPRITE_HEIGHT
+    CMP $80
+    DEY
     BPL DrawEnemies
 ;   Stop Drawn Aliens
     LDA #0
@@ -430,7 +429,7 @@ NotUseLineAlign:
     BEQ ExitAliens
     LDX ALIENS_COUNT
     LDA ALIENS_ATT-1,X
-    STA ALIENS_ATT+6
+    STA ATT_ROTATION
 ;   Set Next Line Sprites (Pointer Arithmetic)
     LDA ALIENS_TEMP
     CLC
@@ -439,7 +438,7 @@ NotUseLineAlign:
 ;   Set Aliens Sprite
     LDX #11
 SetAliensGrpLoop:
-    ROR ALIENS_ATT+6
+    ROR ATT_ROTATION
     BCS AlienAlive      ; 2/3
     LDA #>SpritEmpty    ; 2 (2)
     LDY #<SpritEmpty    ; 2 (4)
@@ -608,7 +607,7 @@ WaitPlayer:
 ;   Set Player Color
     LDA #PLAYER_COLOR
     STA COLUP0
-;   Save in stack Y value, use Y for Indirect Address
+;   Save in Stack Y Value, Use Y for Indirect Address
     TYA
     TAX
     LDY #0
@@ -673,6 +672,10 @@ LimLen:
     LDA #0
     STA ENAM0
     STA ENAM1
+    STA ENABL
+    STA VDELP0
+    STA VDELP1
+    STA VDELBL
     STA HMCLR
 ;
 ;=============================================================================================
@@ -750,8 +753,8 @@ NoEOR:
 ;   Function with Extreme Precision of Time Consumption and Triggering of Object Position Recorders, 
 ; with the Same Value as Register A.
 SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
-	STA WSYNC	    ; 0 (0)
-    BIT 0		    ; 3 (6)
+	STA WSYNC	    ; 3 (0)
+    CMP $80         ; 3 (9)
 	SEC		        ; 2 (15)
 DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minimum consumption is 4 cycles and the maximum is 59 cycles
 	SBC #15		    ; 2
@@ -760,7 +763,7 @@ DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minim
 	ASL             ; 2 (33/183)
 	ASL             ; 2 (39/189)
 	ASL             ; 2 (45/195)
-	ASL             ; 2 (51/211)
+	ASL             ; 2 (51/201)
 	STA RESP0,X	    ; 4 (57/207) --> (69/219) --> +5 --> (74/224) --> -68 --> (6/156)
 	STA HMP0,X
 	RTS
@@ -779,7 +782,7 @@ AjustDelayAliens:
     LDA ALIENS_POS
     SEC
     SBC #31
-    BCC OutAjust
+    BCC OutAjust    ; Branch if [A < OutAjust]
 ;   Balance as Needed
 AjustDelayLoop:
     TAX
@@ -882,14 +885,14 @@ CheckColumnsLoop:           ; Check Empty Columns
     BEQ SetVerticalLimit    ; If There are no Changes, Branch !
 ;   Backup to Memory
     STA COLUMNS_ALIVE
-    STA TEMP_ROTATION
+    STA ATT_ROTATION
 ;   Standard Limit of Aliens to the Right
     LDA #49
     STA RIGHT_LIMIT_AL
 ;   Increases Right Limit (without the presence of Columns in Right)
     LDX #5
 BoardRightLimitLoop:
-    ROR TEMP_ROTATION
+    ROR ATT_ROTATION
     BCS CheckLeftLimit
     ADC #16
     STA RIGHT_LIMIT_AL
@@ -901,7 +904,7 @@ CheckLeftLimit:
     ROL
     ROL 
     ROL
-    STA TEMP_ROTATION
+    STA ATT_ROTATION
 ;   If First Column Exists, Branch !
     BCS SetVerticalLimit
 ;   Move Aliens From Each Column Until There is at Least 1 Alien in the First Column (Column Existence Condition)
@@ -918,7 +921,7 @@ ShiftAliens:
     ADC #16
     STA ALIENS_POS
 ;   Continue Until the Column Exists
-    ROL TEMP_ROTATION
+    ROL ATT_ROTATION
     BCS SetVerticalLimit
     DEY
     BPL BoardLeftLimitLoop
