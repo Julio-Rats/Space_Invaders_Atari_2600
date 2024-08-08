@@ -17,16 +17,18 @@ SYSTEM_TV = "NTSC"  ; (NTSC, PAL)
 ;                       NTSC 60 FPS
     IF SYSTEM_TV == "NTSC"
 
-KERNEL_SCANLINE     = 217 ;192+25
+KERNEL_SCANLINE     = 212 ;192+20
 
-VBLANK_TIMER        = 44
+VBLANK_TIMER        = 50
 OVERSCAN_TIMER      = 6
 
 BACK_COLOR          = $00
 FLOOR_COLOR         = $E2
 PLAYER_COLOR        = $C4
-RIGHT_LIMIT_COLOR   = $C4
+LEFT_SCORE_COLOR    = $C4
+RIGHT_SCORE_COLOR   = $F6
 LEFT_LIMIT_COLOR    = $F6
+RIGHT_LIMIT_COLOR   = $C4
 ENEMY_COLOR         = $16
 DEFENSE_COLOR       = $34
 
@@ -35,16 +37,18 @@ DEFENSE_COLOR       = $34
     ELSE
         IF SYSTEM_TV == "PAL"
 
-KERNEL_SCANLINE     = 253 ;228+25
+KERNEL_SCANLINE     = 249 ;229+20
 
-VBLANK_TIMER        = 53
+VBLANK_TIMER        = 58
 OVERSCAN_TIMER      = 13
 
 BACK_COLOR          = $00
 FLOOR_COLOR         = $26
 PLAYER_COLOR        = $36
-RIGHT_LIMIT_COLOR   = $34
+LEFT_SCORE_COLOR    = $54
+RIGHT_SCORE_COLOR   = $26
 LEFT_LIMIT_COLOR    = $46
+RIGHT_LIMIT_COLOR   = $34
 ENEMY_COLOR         = $2C
 DEFENSE_COLOR       = $64
 
@@ -64,13 +68,15 @@ PLAYER_LEN     = 10
 ALIEN_LEN      = 10
 PLAYER_SCAN    = (FLOOR_SCAN-PLAYER_LEN)
 SCORE_SCAN     = 5
-MOVE_SPEED     = 1
+PL_MOVE_SPEED  = 1
+AL_MOVE_SPEED  = %00100000
 LEFT_LIMIT_PL  = 33
 RIGHT_LIMIT_PL = 122
 ENEMY_DIST     = KERNEL_SCANLINE-192
 DEF_DIST       = PLAYER_SCAN-28
 ALIENS_LIMIT   = PLAYER_SCAN-18*5-15
 LEFT_LIMIT_AL  = 22
+RIGHT_DFLIM_AL = 49
 TAPS           = $B8
 SEED           = 13
 
@@ -84,10 +90,14 @@ SEED           = 13
 RANDOM_NUMBER   ds  1   ; Random Number :)
 
 FRAME_COUNT     ds  1   ; Frame Count
-SCANLINE_COUNT  ds  1   ; Temp for Ajust Number of Scanline After Aliens
+SCANLINE_COUNT  ds  1   ; Temp for Ajust Number of Scanline Passed
 
 PLAYER_POS      ds  1   ; Player X-pos
 PLAYER_GRP      ds  2   ; Player PTR Grp
+
+SCORE_VALUE     ds  4   ; Left and Rigth Score Value (1 Byte for 2 Digits, 2 Bytes for each side)
+SCORE_INDEX     ds  8   ; Index to List of Relative Number0 Graphs (One Index for Digit of Score)
+TEMP_SCORE      ds  1   ; Temp for calculed Graph Index Score
 
 MSL_POS         ds  3   ; Player, Alien1, Alien2 X-pos
 MSL_SCAN        ds  3   ; Player, Alien1, Alien2 Y-pos
@@ -137,6 +147,7 @@ DEFENSE_GRP     ds  27  ; Base Defense Shape
 BootGame:
     SEI
     CLD
+
 ;   Clear Memory
     LDX #0
     TXS
@@ -146,20 +157,24 @@ ClearMemory:
     PHA
     DEX
     BNE ClearMemory
+
 ;   Get Seed for random numbers generation
     LDA INTIM
     BNE NoNULLSeed      ; Check Null Seed (zero)
     LDA #SEED           ; Default Seed with INTIM returns NULL (zero)
 NoNULLSeed:
     STA RANDOM_NUMBER
+
 ;   Player X-pos set
     LDA #75
     STA PLAYER_POS
+
 ;   Player GRP set
     LDA #<SpritePlayer
     STA PLAYER_GRP
     LDA #>SpritePlayer
     STA PLAYER_GRP+1
+
 ;   Aliens X-Pos set
     LDA #22
     STA ALIENS_POS
@@ -171,26 +186,33 @@ NoNULLSeed:
     CLC
     ADC #16
     JSR AjustDelayAliens
+
 ;   Aliens Y-Pos set
     LDA #ENEMY_DIST
     STA ALIENS_SCAN
+
 ;   Aliens Alive set
     LDA #%00111111
+    STA COLUMNS_ALIVE
     LDX #5
 SetAttEnemiesLoop:
     STA ALIENS_ATT,X
     DEX
     BPL SetAttEnemiesLoop ; Branch if x >= 0
+
 ;   Speed Move Aliens set
-    LDA #%00100000
+    LDA #AL_MOVE_SPEED
     STA ALIENS_SPEED
     STA ALIENS_MASK
+
 ;   Board Limits of Aliens
-    LDA #49
+    LDA #RIGHT_DFLIM_AL
     STA RIGHT_LIMIT_AL
+
 ;   Move Direction (Left, Right)
     LDA #0
     STA DIRECTION_AL
+
 ;   Base Defense GRP set
     LDX #8
 LoadDefenseLoop:
@@ -214,11 +236,13 @@ LoadDefenseLoop:
 StartFrame:
 ;   Sync with TV
     LDA #%00001110      ; Vertical sync is signaled by VSYNC's bit 1...
+
 WsynWait:
     STA WSYNC           ; (WSYNC write => wait for end of scanline)
     STA VSYNC
     LSR
     BNE WsynWait
+
 ;   Set time for vertical blank period
     LDA #VBLANK_TIMER   ; Timing Vblank Scanlines
     STA TIM64T
@@ -231,9 +255,32 @@ WsynWait:
 ;   Reset Back Color
     LDA #BACK_COLOR
     STA COLUBK
+
+;   Prepare Color for Score
+    LDA #LEFT_SCORE_COLOR
+    STA COLUP0
+    LDA #RIGHT_SCORE_COLOR
+    STA COLUP1
+    LDA #$02
+    STA CTRLPF
+
+;   Vertical Delay for Aliens
+    LDA #1
+    STA VDELP0
+    STA VDELP1
+
+;   Tree Copies - Medium Dist (Aliens Used)
+    LDA #$06
+    STA NUSIZ0
+    STA NUSIZ1
+
 ;   Set Direction and Position of Aliens Sprites
     JSR CheckBoardLimitsAliens
     JSR MoveSpritesAliens
+
+;   Set Index Score
+    JSR SetIndexScore
+
 ;   Set Based Aliens GRP
     LDA ALIENS_MASK
     BNE InverseSprite
@@ -241,12 +288,12 @@ WsynWait:
     LDY #<SpriteEnemieLine1
     JMP LoadTempSprite
 InverseSprite:
-;   Load Pointer of Base Sprites Aliens
     LDA #>SpriteEnemieLine1_I
     LDY #<SpriteEnemieLine1_I
 LoadTempSprite:
     STA ALIENS_TEMP+1
     STY ALIENS_TEMP
+
 ;   Set First Line of Aliens
     LDA ALIENS_ATT+5
     STA ATT_ROTATION
@@ -266,6 +313,7 @@ SetAlienL1:
     STY ALIENS_LINES,X
     DEX
     BPL SetAliensL1GrpLoop
+
 ;   Increment Counter Frame
     INC FRAME_COUNT
 
@@ -274,6 +322,7 @@ SetAlienL1:
 ;===================================================================
 ;   Input Codes
 
+;   Get Directional Controls
     BIT SWCHA
     BPL RightMove
     BVC LeftMove
@@ -284,7 +333,7 @@ RightMove:
     CMP #(RIGHT_LIMIT_PL-5)
     BCS NoMove
     CLC
-    ADC #MOVE_SPEED
+    ADC #PL_MOVE_SPEED
     STA PLAYER_POS
     JMP NoMove
 LeftMove:
@@ -293,7 +342,7 @@ LeftMove:
     CMP #(LEFT_LIMIT_PL+1)
     BCC NoMove
     SEC
-    SBC #MOVE_SPEED
+    SBC #PL_MOVE_SPEED
     STA PLAYER_POS
 NoMove:
 ;   Set X-Pos of Aliens
@@ -306,6 +355,10 @@ NoMove:
     INX
     JSR SetHorizPos
 
+
+;===================================================================
+;                   Wait for Vblank Finish
+;===================================================================
 ;   Wait Rest of Existing Vblank (Async Clock)
 WaitVblankEnd:
     LDA INTIM
@@ -313,6 +366,7 @@ WaitVblankEnd:
 
 ;   Register Y for Count Hot Scanlines
     TAY ; A:=0 -> Y
+    STA SCANLINE_COUNT
     STA WSYNC
 ;   Apply Moves in Buffers
     STA HMOVE
@@ -336,28 +390,93 @@ WaitVblankEnd:
 ;
 ;   Start Visible Scanlines
 ;   Kernel Code
-    LDA #44
-    STA COLUPF
-    LDA #$FF
+;   Wait and Drawn Score Points
+    LDY #5
+    LDX #8
+LoopSyncScore:
+    DEX
+    BPL LoopSyncScore
+LoopDrawScore:
+;   Draw Score
+;  PF0 | PF1 | PF2      PF0 | PF1 | PF2
+;   X  |     | Y          W |     | Z
+;-------------------------------
+    LDX SCORE_INDEX
+    LDA Number0_I,X
     STA PF0
-    STA PF1
-    STA PF2
     LDA #0
-    STA WSYNC
-    INY
-    STA PF0
     STA PF1
+
+    LDX SCORE_INDEX+3
+    LDA Number0_I,X
+    AND #$0F
     STA PF2
-;   Set Color, Active 3 Copies Medium and Vertical Delay Enable
+
+; --> Half Screen Input Data
+
+    INC SCORE_INDEX
+
+    LDX SCORE_INDEX+4
+    LDA Number0_I,X
+    LDX SCORE_INDEX+7
+    INC SCORE_INDEX+3
+    STA PF0
+
+    INC SCORE_INDEX+4
+
+    LDA Number0_I,X
+    AND #$0F
+    LDX SCORE_INDEX+1
+    STA PF2
+
+    INC SCORE_INDEX+7
+;   Draw Score
+;  PF0 | PF1 | PF2      PF0 | PF1 | PF2
+;      | X Y |              | W Z |
+;-------------------------------
+    LDA Number0,X
+    AND #$F0
+    STA TEMP_SCORE
+    LDX SCORE_INDEX+2
+    LDA #0
+    STA PF0
+    STA PF2
+    LDA Number0,X
+    AND #$0F
+    ORA TEMP_SCORE
+    STA PF1
+
+    INC SCORE_INDEX+1
+
+; --> Half Screen Input Data
+
+    LDX SCORE_INDEX+5
+    LDA Number0,X
+    AND #$F0
+    STA TEMP_SCORE
+    LDX SCORE_INDEX+6
+    LDA Number0,X
+    AND #$0F
+    ORA TEMP_SCORE
+    STA PF1
+
+    INC SCORE_INDEX+2
+    INC SCORE_INDEX+5
+    INC SCORE_INDEX+6
+;-------------------------------
+    DEY
+    BNE LoopDrawScore
+
+    LDA #0
+    STA PF1
+
+    LDY #11
+;   Set Color to Aliens
+    LDA #$00
+    STA CTRLPF
     LDA #ENEMY_COLOR
     STA COLUP0
     STA COLUP1
-    LDA #$06
-    STA NUSIZ0
-    STA NUSIZ1
-    LDA #1
-    STA VDELP0
-    STA VDELP1
 
 WaitEnemies:
     INY
@@ -750,7 +869,7 @@ NoEOR:
 ;   Where X Represents Values ​for Player X (X Equal 0 or 1)
 ;   Where A Contains the Color Clock Value of the Object on the Screen (Column Position of Object)
 ;
-;   Function with Extreme Precision of Time Consumption and Triggering of Object Position Recorders, 
+;   Function with Extreme Precision of Time Consumption and Triggering of Object Position Recorders,
 ; with the Same Value as Register A.
 SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
 	STA WSYNC	    ; 3 (0)
@@ -770,7 +889,7 @@ DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minim
 
 ;FUNCTION AjustDelayAliens(None)
 ;   Adjusts the Jump Address of the 'ALIENS_DELAY' Variable
-; Taking the Position of the Object on the Screen as a Criterion, 
+; Taking the Position of the Object on the Screen as a Criterion,
 ; This Serves to Keep the Swap Time Between GRP0 and GRP1 Viable, Keeping the Positioning Aligned
 ;
 AjustDelayAliens:
@@ -782,7 +901,7 @@ AjustDelayAliens:
     LDA ALIENS_POS
     SEC
     SBC #31
-    BCC OutAjust    ; Branch if [A < OutAjust]
+    BCC OutAjust    ; Branch if [A < 31]
 ;   Balance as Needed
 AjustDelayLoop:
     TAX
@@ -800,8 +919,8 @@ OutAjust:
     RTS
 
 ;FUNCTION MoveSpritesAliens
-;   This Function Will Detect the Passage of Time Through Frame Counting, 
-; Making the Aliens Move Horizontally and Treating the Vertical Descent 
+;   This Function Will Detect the Passage of Time Through Frame Counting,
+; Making the Aliens Move Horizontally and Treating the Vertical Descent
 ; When It Reaches the Side Limits
 ;
 MoveSpritesAliens:
@@ -809,7 +928,7 @@ MoveSpritesAliens:
     AND ALIENS_SPEED
     CMP ALIENS_MASK
     BEQ SetOut
-    STA ALIENS_MASK  
+    STA ALIENS_MASK
 ;   Sprite Move
     LDA DIRECTION_AL
     BNE AliensMoveForward
@@ -835,7 +954,7 @@ PosMove:
 SetOut:
 ;   Caution if need code here !!
     RTS
-;   
+;
 ReverseDirection: ; Treats vertical displacement of aliens
     LDA ALIENS_SCAN
     CLC
@@ -869,7 +988,7 @@ NoEndGame:
     RTS
 
 ;FUNCTION CheckBoardLimitsAliens
-;   This Function Will Check Empty Side Columns, 
+;   This Function Will Check Empty Side Columns,
 ; If You Think It Will Adjust The Aliens' Movement Limits,
 ; Always Keeping The First Column And Line As Relative To The Movement
 ;
@@ -885,30 +1004,16 @@ CheckColumnsLoop:           ; Check Empty Columns
     BEQ SetVerticalLimit    ; If There are no Changes, Branch !
 ;   Backup to Memory
     STA COLUMNS_ALIVE
-    STA ATT_ROTATION
-;   Standard Limit of Aliens to the Right
-    LDA #49
-    STA RIGHT_LIMIT_AL
-;   Increases Right Limit (without the presence of Columns in Right)
-    LDX #5
-BoardRightLimitLoop:
-    ROR ATT_ROTATION
-    BCS CheckLeftLimit
-    ADC #16
-    STA RIGHT_LIMIT_AL
-    DEX
-    BPL BoardRightLimitLoop
+
 ;   Prepare to Check Columns to the Left
-CheckLeftLimit:
-    LDA COLUMNS_ALIVE
     ROL
-    ROL 
+    ROL
     ROL
     STA ATT_ROTATION
 ;   If First Column Exists, Branch !
-    BCS SetVerticalLimit
+    BCS CheckRightLimit
 ;   Move Aliens From Each Column Until There is at Least 1 Alien in the First Column (Column Existence Condition)
-    LDY #4
+    LDY #5
 BoardLeftLimitLoop:
     LDX #5
 ShiftAliens:
@@ -922,9 +1027,27 @@ ShiftAliens:
     STA ALIENS_POS
 ;   Continue Until the Column Exists
     ROL ATT_ROTATION
-    BCS SetVerticalLimit
+    BCS CheckRightLimit
     DEY
-    BPL BoardLeftLimitLoop
+    BEQ BoardLeftLimitLoop
+
+CheckRightLimit:
+;   Prepare to Check Columns to the Right
+    LDA COLUMNS_ALIVE
+    STA ATT_ROTATION
+;   Standard Limit of Aliens to the Right
+    LDA #RIGHT_DFLIM_AL
+    STA RIGHT_LIMIT_AL
+;   Increases Right Limit (without the presence of Columns in Right)
+    LDX #5
+BoardRightLimitLoop:
+    ROR ATT_ROTATION
+    BCS SetVerticalLimit
+    ADC #16
+    STA RIGHT_LIMIT_AL
+    DEX
+    BPL BoardRightLimitLoop
+
 ;   Set the Vertical Limit (Maximum Descent of the First Row, Which is the Highest on the Screen)
 SetVerticalLimit:
 ;   Set Default Base Hit Y-Ground (Relative to first line)
@@ -951,16 +1074,187 @@ CheckUnderLimit:
 NoUnderChange:
     RTS
 
+;FUNCTION SetIndexScore
+;   This function calculates the Index related
+; to the Number0 graph, to be able to access
+; them and draw them on the Score screen
+SetIndexScore:
+    LDX #3
+    LDY #6
+LoopIndexLScore:
+    LDA SCORE_VALUE,X
+    AND #$F0
+    LSR
+    LSR
+    STA TEMP_SCORE
+    LSR
+    LSR
+    CLC
+    ADC TEMP_SCORE
+    STA SCORE_INDEX,Y
+
+    LDA SCORE_VALUE,X
+    AND #$0F
+    STA TEMP_SCORE
+    ASL
+    ASL
+    CLC
+    ADC TEMP_SCORE
+    STA SCORE_INDEX+1,Y
+    DEY
+    DEY
+    DEX
+    BPL LoopIndexLScore
+    RTS
+
 ;=============================================================================================
 ;             				  DATA DECLARATION
 ;=============================================================================================
 ;   Numbers Sprite for Score
-    ORG $FE00
+    ORG $FF00
+
 Number0:
+    .BYTE #%01110111
+    .BYTE #%01010101
+    .BYTE #%01010101
+    .BYTE #%01010101
+    .BYTE #%01110111
+
+Number1:
+    .BYTE #%00100010
+    .BYTE #%01100110
+    .BYTE #%00100010
+    .BYTE #%00100010
+    .BYTE #%01110111
+
+Number2:
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%01110111
+    .BYTE #%01000100
+    .BYTE #%01110111
+
+Number3:
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%01110111
+
+Number4:
+    .BYTE #%01010101
+    .BYTE #%01010101
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%00010001
+
+Number5:
+    .BYTE #%01110111
+    .BYTE #%01000100
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%01110111
+
+Number6:
+    .BYTE #%01000100
+    .BYTE #%01000100
+    .BYTE #%01110111
+    .BYTE #%01010101
+    .BYTE #%01110111
+
+Number7:
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%00010001
+    .BYTE #%00010001
+    .BYTE #%00010001
+
+Number8:
+    .BYTE #%01110111
+    .BYTE #%01010101
+    .BYTE #%01110111
+    .BYTE #%01010101
+    .BYTE #%01110111
+
+Number9:
+    .BYTE #%01110111
+    .BYTE #%01010101
+    .BYTE #%01110111
+    .BYTE #%00010001
+    .BYTE #%00010001
+
+Number0_I:
+    .BYTE #%11101110
+    .BYTE #%10101010
+    .BYTE #%10101010
+    .BYTE #%10101010
+    .BYTE #%11101110
+
+Number1_I:
+    .BYTE #%01000100
+    .BYTE #%01100110
+    .BYTE #%01000100
+    .BYTE #%01000100
+    .BYTE #%11101110
+
+Number2_I:
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%11101110
+    .BYTE #%00100010
+    .BYTE #%11101110
+
+Number3_I:
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%11101110
+
+Number4_I:
+    .BYTE #%10101010
+    .BYTE #%10101010
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%10001000
+
+Number5_I:
+    .BYTE #%11101110
+    .BYTE #%00100010
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%11101110
+
+Number6_I:
+    .BYTE #%00100010
+    .BYTE #%00100010
+    .BYTE #%11101110
+    .BYTE #%10101010
+    .BYTE #%11101110
+
+Number7_I:
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%10001000
+    .BYTE #%10001000
+    .BYTE #%10001000
+
+Number8_I:
+    .BYTE #%11101110
+    .BYTE #%10101010
+    .BYTE #%11101110
+    .BYTE #%10101010
+    .BYTE #%11101110
+
+Number9_I:
+    .BYTE #%11101110
+    .BYTE #%10101010
+    .BYTE #%11101110
+    .BYTE #%10001000
+    .BYTE #%10001000
 
 
 ;   Player, Aliens and Defense Sprites
-    ORG $FF00
 SpritEmpty:
     .BYTE #0,#0,#0,#0,#0,#0,#0,#0,#0,#0
 
