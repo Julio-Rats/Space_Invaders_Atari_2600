@@ -367,6 +367,8 @@ WaitVblankEnd:
 ;   Register Y for Count Hot Scanlines
     TAY ; A:=0 -> Y
     STA SCANLINE_COUNT
+;   Vblank of and dump input to ground value
+    LDA #%10000000
     STA WSYNC
 ;   Apply Moves in Buffers
     STA HMOVE
