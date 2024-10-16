@@ -9,7 +9,6 @@
 </div>
 <br>
 
-  * Game Score
   * Reset Game Button
   * Player Shots
   * Alien Shots
