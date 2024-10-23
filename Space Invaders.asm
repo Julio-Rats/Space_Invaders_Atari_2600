@@ -20,9 +20,11 @@ SYSTEM_TV = "NTSC"  ; (NTSC, PAL)
 KERNEL_SCANLINE     = 212 ;192+20
 
 VBLANK_TIMER        = 50
-OVERSCAN_TIMER      = 6
+FRAME_TIMER         = 249
+OVERSCAN_TIMER      = 45
 
 BACK_COLOR          = $00
+PF_COLOR            = $06
 FLOOR_COLOR         = $E2
 PLAYER_COLOR        = $C4
 LEFT_SCORE_COLOR    = $C4
@@ -40,9 +42,11 @@ DEFENSE_COLOR       = $34
 KERNEL_SCANLINE     = 249 ;229+20
 
 VBLANK_TIMER        = 58
-OVERSCAN_TIMER      = 13
+FRAME_TIMER         = 20
+OVERSCAN_TIMER      = 7
 
 BACK_COLOR          = $00
+PF_COLOR            = $08
 FLOOR_COLOR         = $26
 PLAYER_COLOR        = $36
 LEFT_SCORE_COLOR    = $54
@@ -70,6 +74,7 @@ PLAYER_SCAN    = (FLOOR_SCAN-PLAYER_LEN)
 SCORE_SCAN     = 5
 PL_MOVE_SPEED  = 1
 AL_MOVE_SPEED  = %00100000
+MSL_SPEED      = 2
 LEFT_LIMIT_PL  = 33
 RIGHT_LIMIT_PL = 122
 ENEMY_DIST     = KERNEL_SCANLINE-192
@@ -255,6 +260,8 @@ WsynWait:
 ;   Reset Back Color
     LDA #BACK_COLOR
     STA COLUBK
+    LDA #PF_COLOR
+    STA COLUPF
 
 ;   Prepare Color for Score
     LDA #LEFT_SCORE_COLOR
@@ -280,6 +287,60 @@ WsynWait:
 
 ;   Set Index Score
     JSR SetIndexScore
+
+;   Move Acty Misseles
+    BIT MSL_ATT
+    BPL AliensMissile1
+    LDA MSL_SCAN
+    ; Check MSL Top Collision
+    CMP #(MSL_SPEED+1)
+    BCS PMSL
+    ; Stop Draw
+    LDA MSL_ATT
+    AND #%01111111
+    STA MSL_ATT
+    JMP AliensMissile1
+PMSL:
+    ; Move MSL
+    LDX #0
+    LDA #(-MSL_SPEED)
+    JSR MoveMSL
+AliensMissile1:
+    BIT MSL_ATT
+    BVC AliensMissile2
+    ; Check MSL Ground Collision
+    LDA MSL_SCAN+1
+    CMP #(PLAYER_SCAN+PLAYER_LEN+1)
+    BCC A1MSL
+    ; Stop Draw
+    LDA MSL_ATT
+    AND #%10111111
+    STA MSL_ATT
+    JMP AliensMissile2
+A1MSL: 
+    ; Move MSL
+    LDX #1
+    LDA #MSL_SPEED
+    JSR MoveMSL
+AliensMissile2:
+    LDA MSL_ATT
+    AND #%00100000
+    BEQ NoMoveMSL
+    ; Check MSL Ground Collision
+    LDA MSL_SCAN+2
+    CMP #(PLAYER_SCAN+PLAYER_LEN+1)
+    BCC A2MSL
+    ; Stop Draw
+    LDA MSL_ATT
+    AND #%11011111
+    STA MSL_ATT
+    JMP NoMoveMSL
+A2MSL:
+    ; Move MSL
+    LDX #2
+    LDA #MSL_SPEED
+    JSR MoveMSL
+NoMoveMSL:
 
 ;   Set Based Aliens GRP
     LDA ALIENS_MASK
@@ -322,6 +383,22 @@ SetAlienL1:
 ;===================================================================
 ;   Input Codes
 
+    LDA MSL_ATT
+    BMI GetMove
+    BIT INPT4
+    BMI GetMove
+    LDA PLAYER_POS
+    CLC
+    ADC #$04
+    STA MSL_POS
+    LDX #$04
+    JSR SetHorizPos
+    LDA #(PLAYER_SCAN-PLAYER_LEN-6)
+    STA MSL_SCAN
+    LDA #%10000000
+    ORA MSL_ATT
+    STA MSL_ATT
+GetMove:
 ;   Get Directional Controls
     BIT SWCHA
     BPL RightMove
@@ -355,6 +432,11 @@ NoMove:
     INX
     JSR SetHorizPos
 
+    LDA SWCHB
+    AND #1
+    BNE NoReset
+    JMP BootGame
+NoReset:
 
 ;===================================================================
 ;                   Wait for Vblank Finish
@@ -374,6 +456,18 @@ WaitVblankEnd:
     STA HMOVE
 ;   Clear Collisions (New Frame)
     STA CXCLR
+    LDA #FRAME_TIMER
+
+    IF SYSTEM_TV == "NTSC"
+
+    STA TIM64T
+
+    ELSE IF SYSTEM_TV == "PAL"
+
+    STA T1024T
+
+    ENDIF
+    ENDIF
     STA WSYNC
 ;   Clear Buffers of Moves
     STA HMCLR
@@ -734,7 +828,7 @@ WaitPlayer:
     LDY #0
 DrawPlayer:
     INX
-    STA WSYNC
+    STA WSYNC           ; --> Sync Wsync
     LDA (PLAYER_GRP),Y
     STA GRP0
     INY
@@ -752,7 +846,7 @@ PlayerDeadJmp:
     LDA #LEFT_LIMIT_COLOR
     STA COLUP1
 ;   Delay M0 Limits Position
-    STA RESM0
+    STA RESM0               ; --> Need Sync
 ;   Fine Limits Position
     LDA #$C0
     STA HMM0
@@ -764,7 +858,7 @@ DelayM1:
     DEX
     BNE DelayM1
     NOP
-    STA RESM1
+    STA RESM1               ; --> Need Sync
 ;   Apply Moves
     INY
     STA WSYNC
@@ -804,11 +898,8 @@ LimLen:
 ;=============================================================================================
 ;   Wait hot Scanlines Over
 ScanlineEnd:
-;   Increment Y-ScanLine Count
-    INY
-    STA WSYNC
-    CPY #KERNEL_SCANLINE
-    BCC ScanlineEnd
+    LDA INTIM
+    BNE ScanlineEnd
 
 ;=============================================================================================
 ;=============================================================================================
@@ -818,11 +909,14 @@ ScanlineEnd:
 ;=============================================================================================
 ;=============================================================================================
 Overscan:
+    STA WSYNC
+    STA WSYNC
+
     LDA #%01000010          ; "Turn Off Cathodic Ray"
     STA VBLANK
 
     LDA #OVERSCAN_TIMER     ; Timing OverScanlines
-    STA TIM64T
+    STA TIM8T
 
 ;===================================================================
 ;===================================================================
@@ -858,6 +952,7 @@ WaitOverscanEnd:            ; Timing OverScanlines
 ; FUNCTION RandNumber (None):
 ;   Get next random number
 ;   Based in Linear-feedback Shift Register
+;
 RandNumber:
     LDA RANDOM_NUMBER
     LSR
@@ -873,23 +968,24 @@ NoEOR:
 ;
 ;   Function with Extreme Precision of Time Consumption and Triggering of Object Position Recorders,
 ; with the Same Value as Register A.
+;
 SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
-	STA WSYNC	    ; 3 (0)
+    STA WSYNC	    ; 3 (0)
     CMP $80         ; 3 (9)
-	SEC		        ; 2 (15)
+    SEC		        ; 2 (15)
 DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minimum consumption is 4 cycles and the maximum is 59 cycles
-	SBC #15		    ; 2
+    SBC #15		    ; 2
     BCS DivisionLoop; 2/3
-	EOR #7		    ; 2 (27/177)
-	ASL             ; 2 (33/183)
-	ASL             ; 2 (39/189)
-	ASL             ; 2 (45/195)
-	ASL             ; 2 (51/201)
-	STA RESP0,X	    ; 4 (57/207) --> (69/219) --> +5 --> (74/224) --> -68 --> (6/156)
-	STA HMP0,X
-	RTS
+    EOR #7		    ; 2 (27/177)
+    ASL             ; 2 (33/183)
+    ASL             ; 2 (39/189)
+    ASL             ; 2 (45/195)
+    ASL             ; 2 (51/201)
+    STA RESP0,X	    ; 4 (57/207) --> (69/219) --> +5 --> (74/224) --> -68 --> (6/156)
+    STA HMP0,X
+    RTS
 
-;FUNCTION AjustDelayAliens(None)
+;FUNCTION AjustDelayAliens
 ;   Adjusts the Jump Address of the 'ALIENS_DELAY' Variable
 ; Taking the Position of the Object on the Screen as a Criterion,
 ; This Serves to Keep the Swap Time Between GRP0 and GRP1 Viable, Keeping the Positioning Aligned
@@ -1080,6 +1176,7 @@ NoUnderChange:
 ;   This function calculates the Index related
 ; to the Number0 graph, to be able to access
 ; them and draw them on the Score screen
+;
 SetIndexScore:
     LDX #3
     LDY #6
@@ -1109,6 +1206,16 @@ LoopIndexLScore:
     BPL LoopIndexLScore
     RTS
 
+;FUNCTION MoveMSL(A,X)
+;   This function moves missiles towards players and aliens
+; use the X input to change the current missile and 
+; use the A value to move
+;
+MoveMSL:
+    CLC
+    ADC MSL_SCAN,X
+    STA MSL_SCAN,X
+    RTS
 ;=============================================================================================
 ;             				  DATA DECLARATION
 ;=============================================================================================
