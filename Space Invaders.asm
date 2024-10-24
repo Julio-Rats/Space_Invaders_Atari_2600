@@ -21,7 +21,7 @@ KERNEL_SCANLINE     = 212 ;192+20
 
 VBLANK_TIMER        = 50
 FRAME_TIMER         = 249
-OVERSCAN_TIMER      = 45
+OVERSCAN_TIMER      = 46
 
 BACK_COLOR          = $00
 PF_COLOR            = $06
@@ -43,7 +43,7 @@ KERNEL_SCANLINE     = 249 ;229+20
 
 VBLANK_TIMER        = 58
 FRAME_TIMER         = 20
-OVERSCAN_TIMER      = 7
+OVERSCAN_TIMER      = 8
 
 BACK_COLOR          = $00
 PF_COLOR            = $08
@@ -449,8 +449,6 @@ WaitVblankEnd:
 ;   Register Y for Count Hot Scanlines
     TAY ; A:=0 -> Y
     STA SCANLINE_COUNT
-;   Vblank of and dump input to ground value
-    LDA #%10000000
     STA WSYNC
 ;   Apply Moves in Buffers
     STA HMOVE
@@ -468,6 +466,8 @@ WaitVblankEnd:
 
     ENDIF
     ENDIF
+;   Vblank of and dump input to ground value
+    LDA #%10000000
     STA WSYNC
 ;   Clear Buffers of Moves
     STA HMCLR
@@ -944,7 +944,7 @@ WaitOverscanEnd:            ; Timing OverScanlines
 
 ;=============================================================================================
 ;=============================================================================================
-;             				  FUNCTION DECLARATION
+;                             FUNCTION DECLARATION
 ;=============================================================================================
 ;=============================================================================================
 ;   Functions Codes
@@ -970,18 +970,18 @@ NoEOR:
 ; with the Same Value as Register A.
 ;
 SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
-    STA WSYNC	    ; 3 (0)
+    STA WSYNC       ; 3 (0)
     CMP $80         ; 3 (9)
-    SEC		        ; 2 (15)
+    SEC             ; 2 (15)
 DivisionLoop: ; Each loop consumes 5 cycles, the last loop consumes 4. The minimum consumption is 4 cycles and the maximum is 59 cycles
-    SBC #15		    ; 2
+    SBC #15         ; 2
     BCS DivisionLoop; 2/3
-    EOR #7		    ; 2 (27/177)
+    EOR #7          ; 2 (27/177)
     ASL             ; 2 (33/183)
     ASL             ; 2 (39/189)
     ASL             ; 2 (45/195)
     ASL             ; 2 (51/201)
-    STA RESP0,X	    ; 4 (57/207) --> (69/219) --> +5 --> (74/224) --> -68 --> (6/156)
+    STA RESP0,X     ; 4 (57/207) --> (69/219) --> +5 --> (74/224) --> -68 --> (6/156)
     STA HMP0,X
     RTS
 
@@ -1217,7 +1217,7 @@ MoveMSL:
     STA MSL_SCAN,X
     RTS
 ;=============================================================================================
-;             				  DATA DECLARATION
+;                             DATA DECLARATION
 ;=============================================================================================
 ;   Numbers Sprite for Score
     ORG $FF00
