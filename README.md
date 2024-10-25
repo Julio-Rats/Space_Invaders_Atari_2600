@@ -9,9 +9,9 @@
 </div>
 <br>
 
-  * Reset Game Button
-  * Player Shots
+  * Reset Game Button (Soft Mode)
   * Alien Shots
   * Alien Killed by Missile
+  * Player killed by missile
   * Auto Reset After Killing Aliens
   * Difficulty Progression Control
