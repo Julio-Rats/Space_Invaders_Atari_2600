@@ -17,7 +17,7 @@ SYSTEM_TV = "NTSC"  ; (NTSC, PAL)
 ;                       NTSC 60 FPS
     IF SYSTEM_TV == "NTSC"
 
-KERNEL_SCANLINE     = 212 ;192+20
+KERNEL_SCANLINE     = 217 ;192+25
 
 VBLANK_TIMER        = 50
 FRAME_TIMER         = 249
@@ -74,12 +74,13 @@ PLAYER_SCAN    = (FLOOR_SCAN-PLAYER_LEN)
 SCORE_SCAN     = 5
 PL_MOVE_SPEED  = 1
 AL_MOVE_SPEED  = %00100000
+AL_VERT_SPEED  = 10
 MSL_SPEED      = 2
 LEFT_LIMIT_PL  = 33
 RIGHT_LIMIT_PL = 122
-ENEMY_DIST     = KERNEL_SCANLINE-192
-DEF_DIST       = PLAYER_SCAN-28
-ALIENS_LIMIT   = PLAYER_SCAN-18*5-15
+ENEMY_DIST     = KERNEL_SCANLINE-196
+DEF_DIST       = PLAYER_SCAN-27
+ALIENS_LIMIT   = PLAYER_SCAN-19*6-1
 LEFT_LIMIT_AL  = 22
 RIGHT_DFLIM_AL = 49
 TAPS           = $B8
@@ -106,7 +107,7 @@ TEMP_SCORE      ds  1   ; Temp for calculed Graph Index Score
 
 MSL_POS         ds  3   ; Player, Alien1, Alien2 X-pos
 MSL_SCAN        ds  3   ; Player, Alien1, Alien2 Y-pos
-MSL_ATT         ds  1   ; Missels Status
+MSL_ATT         ds  1   ; Missile Status
 ;      MSL_ATT DECODER
 ;   Bit            Status
 ;
@@ -115,6 +116,9 @@ MSL_ATT         ds  1   ; Missels Status
 ;    5         Alien 2º Missile
 ;
 ;   0-2      Current Missile Draw   P:2,A1:1,A2:0
+MSL_CURRSCAN    ds  1   ; Missile Current Scanline Delay
+MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Aliens Missile Frame
+MSL_NEXTPOS     ds  1   ; Relative Distance to Next Missile (below) - Only used in Aliens Missile Frame
 
 ALIENS_POS      ds  1   ; Alien X-pos (First Line and Column)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
@@ -288,6 +292,26 @@ WsynWait:
 ;   Set Index Score
     JSR SetIndexScore
 
+;   Set Current Missile
+    LDA MSL_ATT
+    AND #%00000111
+    BEQ NoCurrMSL
+    AND #%00000100
+    BEQ NoPlayerMSL
+;   Player MSL
+    LDA MSL_SCAN
+    STA MSL_CURRSCAN
+    LDA #0
+    STA MSL_NEXTPOS
+    STA MSL_NEXTHMV
+NoPlayerMSL:
+
+    JMP CurrMSL
+NoCurrMSL:
+    LDA #$FF
+    STA MSL_CURRSCAN
+CurrMSL:
+
 ;   Move Acty Misseles
     BIT MSL_ATT
     BPL AliensMissile1
@@ -314,10 +338,10 @@ AliensMissile1:
     BCC A1MSL
     ; Stop Draw
     LDA MSL_ATT
-    AND #%10111111
+    AND #%10111011
     STA MSL_ATT
     JMP AliensMissile2
-A1MSL: 
+A1MSL:
     ; Move MSL
     LDX #1
     LDA #MSL_SPEED
@@ -395,7 +419,7 @@ SetAlienL1:
     JSR SetHorizPos
     LDA #(PLAYER_SCAN-PLAYER_LEN-6)
     STA MSL_SCAN
-    LDA #%10000000
+    LDA #%10000100
     ORA MSL_ATT
     STA MSL_ATT
 GetMove:
@@ -573,9 +597,12 @@ LoopDrawScore:
     LDA #ENEMY_COLOR
     STA COLUP0
     STA COLUP1
+    DEC MSL_CURRSCAN
+    DEC MSL_CURRSCAN
 
 WaitEnemies:
     INY
+    JSR TryDrawMSL
     STA WSYNC
     CPY ALIENS_SCAN
     BCC WaitEnemies
@@ -617,28 +644,50 @@ DrawEnemies:    ; 22-30      0
     STA GRP0
     STX GRP1
     STX GRP0
-    .BYTE $EA,$EA,$EA,$EA,$EA,$EA ; 6 NOP -> 12 Cycles Wasted -> 36 Color Clock
-    CMP $80
+
+    PHA
+    PLA
+    NOP
+    NOP
+    DEC MSL_CURRSCAN
+    DEC MSL_CURRSCAN
+
+    DEY
+    LDA (ALIENS_LINES+10),Y
+    TAX
+    LDA (ALIENS_LINES),Y
+    STA GRP0
+    LDA (ALIENS_LINES+2),Y
+    STA GRP1
+    LDA (ALIENS_LINES+4),Y
+    STA GRP0
+    LDA (ALIENS_LINES+6),Y
+    STA GRP1
+    LDA (ALIENS_LINES+8),Y
+    STA GRP0
+    STX GRP1
+    STX GRP0
+
+    LDA MSL_CURRSCAN
+    CMP #8
+    BCC TryDrawMSL1
+    LDA #0
+    BCS TryDrawMSL2
+TryDrawMSL1:
+    NOP
+    LDA #2
+TryDrawMSL2:
+    STA ENABL
+
     DEY
     BPL DrawEnemies
+
 ;   Stop Drawn Aliens
     LDA #0
     STA GRP0
     STA GRP1
     STA GRP0
-;   Prepare for Missiles
-    STA NUSIZ0
-    STA NUSIZ1
-;   Consume if Line Used Long JmpDelay (Adjust Cycle Synchronization)
-    LDA ALIENS_DELAY
-    SEC
-    SBC #<JmpDelay
-    SBC #14
-    NOP
-    BCC NotUseLineAlign
-    .BYTE $EA,$EA,$EA
-    CMP $80
-NotUseLineAlign:
+
 ;   Check End of Aliens Lines
     LDX ALIENS_NUM
     BEQ ExitAliens
@@ -650,6 +699,7 @@ NotUseLineAlign:
     CLC
     ADC #10
     STA ALIENS_TEMP
+
 ;   Set Aliens Sprite
     LDX #11
 SetAliensGrpLoop:
@@ -673,25 +723,25 @@ SetAlien:   ; 9
     ADC SCANLINE_COUNT
     TAY
 
-    LDX #2
+    LDX #4
 VertSpaceAliensLoop:    ; Consume Unused Scanlines Between Aliens Lines
+    JSR TryDrawMSL
     INY
     DEX
     STA WSYNC
     BPL VertSpaceAliensLoop
+
 ;   Prepare for Another Loop
-    LDX #20             ; Delay in RelativeDelayAliensLoop
-    CMP $80
-    LDA #6
-    STA NUSIZ0
-    STA NUSIZ1
+    LDX #7             ; Delay in RelativeDelayAliensLoop
     DEC ALIENS_COUNT
     DEC ALIENS_NUM
     JMP RelativeDelayAliensLoop
+
+
 ExitAliens:
-
-
     LDA #13
+    CLC
+    ADC ALIENS_COUNT
     CLC
     ADC SCANLINE_COUNT
     TAY
@@ -723,7 +773,10 @@ PlayerAlive:
     STA VDELP1
 ;   Jump if Aliens "Destroy" Base Defense
     CPY #DEF_DIST-3
-    BPL DefenseIsGone
+    BMI DefenseNotIsGone
+    JSR TryDrawMSL
+    JMP DefenseIsGone
+DefenseNotIsGone
 ;   Prepare GRP0 for 3 Copies Medium for Base Defense Drawn
     LDA #6
     STA NUSIZ0
@@ -742,21 +795,32 @@ PlayerAlive:
 
 WaitDefense:
     INY
+    JSR TryDrawMSL
     STA WSYNC
     CPY #DEF_DIST-1
     BCC WaitDefense
 
     STY SCANLINE_COUNT
+
     LDY #13
 RelativeDelayDefenseLoop:
     DEY
     BPL RelativeDelayDefenseLoop
-    CMP $80
-    NOP
-    NOP
+
     LDX #0
 DrawDefenseLoop:
-    .BYTE $48,$68,$48,$68       ; 2 par of PHA PLA (14 Cycles Wasted)
+    DEC MSL_CURRSCAN
+    LDA MSL_CURRSCAN
+    CMP #8
+    BCC TryDrawMSL3
+    LDA #0
+    BCS TryDrawMSL4
+TryDrawMSL3:
+    NOP
+    LDA #2
+TryDrawMSL4:
+    STA ENABL
+
     LDA DEFENSE_GRP,X
     STA GRP0
     NOP
@@ -768,13 +832,25 @@ DrawDefenseLoop:
     LDA DEFENSE_GRP+18,X
     STA GRP0
 
-    LDY #7
+    LDY #3
 DelayDefenseLoop:
     DEY
     BPL DelayDefenseLoop
     CMP $80
     CMP $80
 
+    DEC MSL_CURRSCAN
+    LDA MSL_CURRSCAN
+    CMP #8
+    BCC TryDrawMSL5
+    LDA #0
+    BCS TryDrawMSL6
+TryDrawMSL5:
+    NOP
+    LDA #2
+TryDrawMSL6:
+    STA ENABL
+
     LDA DEFENSE_GRP,X
     STA GRP0
     NOP
@@ -785,32 +861,37 @@ DelayDefenseLoop:
     NOP
     LDA DEFENSE_GRP+18,X
     STA GRP0
-    .BYTE $48,$68,$48,$68       ; 2 par of PHA PLA -> 14 Cycles Wasted -> 42 Color Clock
-    NOP
+    CMP $80
+    PHA
+    PLA
     INC SCANLINE_COUNT
     INC SCANLINE_COUNT
     INX
     CPX #9
     BNE DrawDefenseLoop
 
-
     LDA #0
     STA GRP0
-    INC SCANLINE_COUNT
     LDY SCANLINE_COUNT
+    INY
+    JMP DefeseAlive
 
 DefenseIsGone:
-
+    INY
+DefeseAlive:
     LDA PLAYER_POS
     LDX #0
     INY
     JSR SetHorizPos
 
 WaitPlayer:
+    JSR TryDrawMSL
     INY
     STA WSYNC
     CPY #PLAYER_SCAN-2
     BCC WaitPlayer
+    LDA #0
+    STA ENABL
     INY
     STA WSYNC
     STA HMOVE
@@ -1056,15 +1137,16 @@ SetOut:
 ReverseDirection: ; Treats vertical displacement of aliens
     LDA ALIENS_SCAN
     CLC
-    ADC #10
+    ADC #AL_VERT_SPEED
     STA ALIENS_SCAN
 ;   Vertical Limit Check (End of Game, Collision with Player/Ground)
     CMP SCAN_LIMIT_AL
     BCC NoEndGame
 ;   Collision with player/ground
 ;   Landing adjustments (no bugs and flick scan on landing)
-    LDA #FLOOR_SCAN
+    LDA #(FLOOR_SCAN-1)
     LDX ALIENS_NUM
+    INX
     BEQ AjustEndScan
 AjustEndScanLoop:
     SEC
@@ -1073,7 +1155,7 @@ AjustEndScanLoop:
     BNE AjustEndScanLoop
 AjustEndScan:
     SEC
-    SBC #14
+    SBC ALIENS_NUM
     STA ALIENS_SCAN
 ;   Stop moving Sprites (Move Speed ​​Zero)
     LDA #0
@@ -1163,7 +1245,7 @@ CheckUnderLimit:
 ;   If it does Not Exist, it Increases the Maximum Line Descent Limit
     LDA SCAN_LIMIT_AL
     CLC
-    ADC #18
+    ADC #19
     STA SCAN_LIMIT_AL
     DEC ALIENS_NUM      ; Decrement the Count of "Live" Lines
     INX
@@ -1208,7 +1290,7 @@ LoopIndexLScore:
 
 ;FUNCTION MoveMSL(A,X)
 ;   This function moves missiles towards players and aliens
-; use the X input to change the current missile and 
+; use the X input to change the current missile and
 ; use the A value to move
 ;
 MoveMSL:
@@ -1216,6 +1298,24 @@ MoveMSL:
     ADC MSL_SCAN,X
     STA MSL_SCAN,X
     RTS
+
+;FUNCTION TryDrawMSL()
+;   This Function activates/deactivates
+; the missile (ball), based on the relative
+; position of the missile in relation to the screen.
+;
+TryDrawMSL:
+    DEC MSL_CURRSCAN
+    LDA MSL_CURRSCAN
+    CMP #8
+    LDA #2
+    BCC DrawMSL
+    LSR
+DrawMSL:
+    STA ENABL
+OutTryMSL:
+    RTS
+
 ;=============================================================================================
 ;                             DATA DECLARATION
 ;=============================================================================================
