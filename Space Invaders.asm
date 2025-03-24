@@ -518,7 +518,7 @@ LoopDrawScore:
 ;   X  | _ _ |  Y        W  | _ _ |  Z
 ;-------------------------------
     LDY SCORE_INDEX
-    LDA (SCORE_GRP),Y     ; X 
+    LDA (SCORE_GRP),Y     ; X
     STA PF0
     LDA #0
     STA PF1
@@ -718,7 +718,7 @@ SetAlien:   ; 9
     ADC SCANLINE_COUNT
     TAY
 
-    LDX #4
+    LDX #3
 VertSpaceAliensLoop:    ; Consume Unused Scanlines Between Aliens Lines
     JSR TryDrawMSL
     INY
@@ -1162,17 +1162,16 @@ ReverseDirection: ; Treats vertical displacement of aliens
     BCC NoEndGame
 ;   Collision with player/ground
 ;   Landing adjustments (no bugs and flick scan on landing)
-    LDA #(FLOOR_SCAN-1)
+    LDA #(FLOOR_SCAN-2)
     LDX ALIENS_NUM
+    SEC
     INX
     BEQ AjustEndScan
 AjustEndScanLoop:
-    SEC
-    SBC #18
+    SBC #17
     DEX
     BNE AjustEndScanLoop
 AjustEndScan:
-    SEC
     SBC ALIENS_NUM
     STA ALIENS_SCAN
 ;   Stop moving Sprites (Move Speed ​​Zero)
@@ -1263,7 +1262,7 @@ CheckUnderLimit:
 ;   If it does Not Exist, it Increases the Maximum Line Descent Limit
     LDA SCAN_LIMIT_AL
     CLC
-    ADC #19
+    ADC #18
     STA SCAN_LIMIT_AL
     DEC ALIENS_NUM      ; Decrement the Count of "Live" Lines
     INX
@@ -1351,7 +1350,7 @@ TryDrawOrChangeMSL:
     LSR
 DrawMSL2:
     STA ENABL
-    
+
     LDA MSL_CURRSCAN
     BPL NoNextMSL
     LDA MSL_NEXTPOS
