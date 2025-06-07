@@ -10,8 +10,8 @@
 <br>
 
   * Reset Game Button (Soft Mode)
-  * Score Count
-  * Alien Shots
+  * Increment counter
+  * Alien Shoots missiles
   * Player killed by missile
-  * Auto Reset After Killing Aliens
+  * Auto Reset After Killing All Aliens
   * Difficulty Progression Control
