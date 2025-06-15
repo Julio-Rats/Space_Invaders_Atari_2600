@@ -111,8 +111,8 @@ MSL_STAT        ds  1   ; Missile Status
 ;
 ;   0-1      Current Missile Draw   bit 0: Player MSL -- bit 1: Aliens MSL
 MSL_CURRSCAN    ds  1   ; Missile Current Scanline Delay
-MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Aliens Missile Frame
 MSL_NEXTPOS     ds  1   ; Relative Distance to Next Missile (below) - Only used in Aliens Missile Frame
+MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Aliens Missile Frame
 
 ALIENS_POS      ds  1   ; Alien X-pos (First Line and Collumn)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
@@ -581,8 +581,9 @@ WaitEnemies:
 ;------------------- Main loop for drawing Aliens -------------------
 ;   SIZE increment for the Loop below not to present borrow page in Branch (temporary)
     ROL $80
+    ROR $80
 
-    LDX #10
+    LDX #9
 LoopRelativeDelayAliens:
     DEX
     BNE LoopRelativeDelayAliens
@@ -713,7 +714,7 @@ SetAlien:   ; 9
     LDA ALIENS_POS
     CMP #$55
     BCC LoopInterAliens
-    DEX                         ; Spend one scan line less
+    DEX                         ; Spend one scanline less
     INY                         ; Increments the Scanline counter
 LoopInterAliens:                ; Consume Unused Scanlines Between Aliens Lines
     JSR TryDrawMSL
@@ -1221,7 +1222,67 @@ AlienShoot:
 ;FUNCTION DefenseBallCollision (None):
 ;   Aliens or Player hit defense Structure
 DefenseBallCollision:
+;   Detecting which column was hit
+    LDX #0
+    LDA MSL_POS
+    SEC
+    SBC #1
+    SBC DEFENSE_POS
+LoopSub:
+    CMP #8
+    BCC PosCollisionFound
+    SBC #32     ; 8+24
+    INX
+    JMP LoopSub
 
+PosCollisionFound:
+    ADC #9
+
+;Generating bit of position to destroy
+    TAY
+    LDA #0
+    SEC
+MakeCollisianShape:
+    ROR
+    DEY
+    BPL MakeCollisianShape
+    STA TEMP_SCORE_ATT
+
+;   Using POINTER_GRP to point to the shape in RAM,
+;    while also finding out which of the 3 defenses was hit
+    INY         ; X == 0
+    STY POINTER_GRP+1
+    LDA #[DEFENSE_SHAPE-1]
+    CLC
+LoopDefenseShapeAjust:
+    ADC #DEFENSE_LEN
+    DEX
+    BPL LoopDefenseShapeAjust
+    STA POINTER_GRP
+
+;   walk on the shape until you find the collided byte
+NoMissMissile:
+    LDA TEMP_SCORE_ATT
+    AND (POINTER_GRP),Y
+    BNE HitDefense
+    DEY
+    JMP NoMissMissile
+
+;   Apply to both above, check end of shape
+HitDefense:
+    LDA TEMP_SCORE_ATT
+    EOR #$FF
+    STA TEMP_SCORE_ATT
+    AND (POINTER_GRP),Y
+    STA (POINTER_GRP),Y
+    DEY
+    CPY #[-DEFENSE_LEN]
+    BEQ OutDefenseCollision
+    LDA TEMP_SCORE_ATT
+    AND (POINTER_GRP),Y
+    STA (POINTER_GRP),Y
+
+OutDefenseCollision:
     RTS
 
 
@@ -1399,7 +1460,7 @@ ShiftAliens:
 ;   Make a new update COLLUMNS_ALIVE
     LDX #4
     LDA ALIENS_STAT+5
-LoopCheckNewCollumns:           ; Check Empty Collumns
+LoopCheckNewCollumns:   ; Check Empty Collumns
     ORA ALIENS_STAT,X
     DEX
     BPL LoopCheckNewCollumns
@@ -1407,11 +1468,11 @@ LoopCheckNewCollumns:           ; Check Empty Collumns
 
 CheckRightLimit:
 ;   Prepare to Check Collumns to the Right
-    LDA COLLUMNS_ALIVE   ;Backup to Memory Update Collumns
+    LDA COLLUMNS_ALIVE  ; Backup to Memory Update Collumns
     AND #%00111111
     STA TEMP_SCORE_ATT
 ;   Standard Limit of Aliens to the Right
-    LDA #[ALIENS_DR_LIMIT-16] ; -16 because it will always add up at least once
+    LDA #[ALIENS_DR_LIMIT-16]   ; -16 because loop will always add up at least once
     CLC
 ;   Increases Right Limit (without the presence of Collumns in Right)
 LoopBoardRightLimit:
@@ -1431,14 +1492,14 @@ SetVerticalLimit:
 ;   Loop to Check Empty Lines Below
     LDX #0
 CheckUnderLimit:
-    LDY ALIENS_STAT,X    ; From the Lowest on the Screen to the Highest
+    LDY ALIENS_STAT,X           ; From the Lowest on the Screen to the Highest
     BNE NoUnderChange
 ;   If it does Not Exist, it Increases the Maximum Line Descent Limit
     CLC
     ADC #[ALIEN_LEN+ALIENS_INTER]
-    DEC ALIENS_NUM      ; Decrement the Count of "Live" Lines
+    DEC ALIENS_NUM              ; Decrement the Count of "Live" Lines
     INX
-    CPX #6              ; Repeat for All Lines
+    CPX #ALIENS_LINES           ; Repeat for All Lines
     BNE CheckUnderLimit
 NoUnderChange:
     STA ALIENS_Y_LIMIT
@@ -1594,6 +1655,7 @@ DrawMSL:
 OutTryMSL:
     RTS
 
+;FUNCTION TryDrawOrChangeMSL (None):
 TryDrawOrChangeMSL:
     DEC MSL_CURRSCAN
     LDA MSL_CURRSCAN
