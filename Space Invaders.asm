@@ -53,6 +53,7 @@ ALIEN_LEN       = 10
 DEFENSE_LEN     = 9
 ALIENS_LINES    = 6
 ALIENS_INTER    = 8
+SPEED_TB_LEN    = Dstrc_tb-Speed_tb
 
 ;   Start Positions
 PLAYER_START    = 75
@@ -76,7 +77,7 @@ PLAYER_L_LIMIT  = 33
 PLAYER_R_LIMIT  = 123
 ALIENS_L_LIMIT  = 22
 ALIENS_DR_LIMIT = 49
-ALIENS_DY_LIMIT = [PLAYER_SCAN-(ALIEN_LEN+ALIENS_INTER)*ALIENS_LINES+4]
+ALIENS_DY_LIMIT = [PLAYER_SCAN-(ALIEN_LEN+ALIENS_INTER)*ALIENS_LINES+ALIENS_INTER-4]
 
 ;   Random Number Utils
 TAPS            = $B8
@@ -104,7 +105,7 @@ SCORE_INDEX     ds  8   ; Index to Indirect PTR, Relative to Number0 + Score_val
 
 MSL_POS         ds  3   ; Player, Alien1, Alien2 X-pos
 MSL_SCAN        ds  3   ; Player, Alien1, Alien2 Y-pos
-MSL_STAT        ds  1   ; Missile Status
+MSL_STAT        ds  1   ; Missile Status (See Below)
 ;      MSL_STAT DECODER
 ;   Bit            Status
 ;
@@ -113,6 +114,7 @@ MSL_STAT        ds  1   ; Missile Status
 ;    5         Alien 2º Missile
 ;
 ;   0-1      Current Missile Draw   bit 0: Player MSL -- bit 1: Aliens MSL
+
 MSL_CURRSCAN    ds  1   ; Missile Current Scanline Delay
 MSL_NEXTPOS     ds  1   ; Relative Distance to Next Missile (below) - Only used in Aliens Missile Frame
 MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Aliens Missile Frame
@@ -120,7 +122,13 @@ MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Ali
 ALIENS_POS      ds  1   ; Alien X-pos (First Line and Collumn)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
 ALIENS_SPEED    ds  1   ; Frames Need to Move Aliens
-ALIENS_MASK     ds  1   ; Direction of Aliens (b7=0: Right else left); Select Aliens Sprites (b6=0: Normal else Reverse)
+ALIENS_MASK     ds  1   ; Control of direction and Orientation (See Below)
+;      ALIENS_MASK DECODER
+;   Bit                    Status
+;
+;    7          Direction  0: Right  1: left
+;    6         Orientation 0: Normal 1: Mirrored
+;
 
 ALIENS_STAT     ds  6   ; Alien Status (bit 0 to 5, Alive Alien := 1)
 COLLUMNS_ALIVE  ds  1   ; Collumns of Living Aliens in the Previous Frame
@@ -128,7 +136,6 @@ ALIENS_NUM      ds  1   ; Used to count how many lines are left to draw
 ALIENS_COUNT    ds  1   ; Number of Current Lines of Aliens
 
 ALIENS_CURR     ds  2   ; Get Current PTR GRP Alien
-ALIENS_BLAST    ds  1   ; 3 MSB indicates which line is in burst, 3 LSB means which Alien
 
 ALIENS_DELAY    ds  2   ; PTR for Time ajust for X-pos Aliens
 
@@ -138,8 +145,8 @@ ALIENS_Y_LIMIT  ds  1   ; Max vertical Position for Aliens Sprite
 DEFENSE_POS     ds  1   ; Base Defense X-Pos
 DEFENSE_SHAPE   ds  27  ; Base Defense Shape
 
-POINTER_GRP     ds 12   ; Dedicated memory for indirect pointers for building graphs (shapes)
-;   --- No longer used ---
+POINTER_GRP     ds  12  ; Dedicated memory for indirect pointers for building graphs (shapes)
+;   --- Variable no longer used ---
 ; PLAYER_GRP      ds  2   ; Player PTR GRP
 ; SCORE_GRP       ds  2   ; PTR to $FF04 --> decremented for each line of the score (counter and pointer :p)
 ; ALIENS_GRP      ds  12  ; Aliens PTR GRP
@@ -237,6 +244,9 @@ VsyncWait:
 ;   Set high address Score GRP PTR
     LDA #>Number0
     STA POINTER_GRP+1
+
+;   Speed Aliens
+    JSR ChangeAliensSpeed
 
 ;   Calculates relative indexes for Scores
     JSR SetIndexScore
@@ -341,15 +351,10 @@ A2MSL:
     JSR MoveMSL
 NoMoveMSL:
 
-;   No Alien in Blast TEMPORARY
-    LDA #$F0
-    STA ALIENS_BLAST
-
-
 ;=============================================================================================
 ;                              INPUT CONTROL PROCESSING AREA
 ;=============================================================================================
-;   Input Codes
+;   Input Code
 
 ;   Check End Game
     LDA ALIENS_SPEED
@@ -583,13 +588,14 @@ WaitEnemies:
 ;   SIZE increment for the Loop below not to present borrow page in Branch (temporary)
     ROL $80
     ROR $80
+    CMP $80
+    NOP
 
-    LDX #9
+    LDX #8
 LoopRelativeDelayAliens:
     DEX
     BNE LoopRelativeDelayAliens
-;   Delay 5 Cycles
-    ; dec $2D
+
     STY SCANLINE_COUNT
     LDY #[ALIEN_LEN-1]
     JMP (ALIENS_DELAY)      ; Indirect Jump
@@ -1606,6 +1612,47 @@ NoEndGame:
     RTS
 
 
+;FUNCTION ChangeAliensSpeed (None):
+; Count the number of aliens defeated and compare with the table,
+;to generate a compatible speed
+ChangeAliensSpeed:
+;   Check the end of the game
+    LDA TEMP_SCORE_ATT
+    BEQ OutChangeSpeed
+    LDX #5
+    LDA #0
+    STA TEMP_SCORE_ATT    ; Reset Counter Aliens Alives
+;   Search for dead aliens in aliens_stat
+LoopLoadStat:
+    LDY #6
+    LDA ALIENS_STAT,X
+LoopCheckAliensLive:
+    ROR
+;   Increases for the dead
+    BCC NoAlienAlive
+    INC TEMP_SCORE_ATT
+NoAlienAlive:
+    DEY
+    BNE LoopCheckAliensLive
+    DEX
+    BPL LoopLoadStat
+
+;   Compare which quantity in the table is greater, 
+; and get the corresponding speed
+    LDA TEMP_SCORE_ATT
+    LDX #[SPEED_TB_LEN-1]
+LoopSpeedTable:
+    CMP Dstrc_tb,X
+    BCC OutLoopSpeedTable
+    DEX
+    BPL LoopSpeedTable
+OutLoopSpeedTable:
+    LDA Speed_tb,X
+    STA ALIENS_SPEED
+
+OutChangeSpeed:
+    RTS
+
 ;FUNCTION SetIndexScore (None):
 ;   This function calculates the Index related
 ; to the Number0 graph, to be able to access
@@ -1707,7 +1754,19 @@ NoNextMSL:
 ;=============================================================================================
 ;                             DATA DECLARATION
 ;=============================================================================================
-;   Numbers Sprite for Score
+;   Speed and Destruction Table
+Speed_tb:
+    .BYTE ALS_FRAME_MOVE   , ALS_FRAME_MOVE>>1
+    .BYTE ALS_FRAME_MOVE>>2, ALS_FRAME_MOVE>>3
+    .BYTE ALS_FRAME_MOVE>>4, ALS_FRAME_MOVE>>5
+    .BYTE 0
+Dstrc_tb:
+    .BYTE 37, 24
+    .BYTE 17, 9
+    .BYTE 5 , 2
+    .BYTE 1
+
+;   Sprites Declaration
     SEG     DATA
     ORG     $FF33
 
