@@ -39,6 +39,7 @@ DEFENSE_COLOR       = $34
 ;                      OTHERS
     ELSE
         ECHO "TV SYSTEM NOT SUPPORTED!"
+        ERR
     ENDIF
 ;===================================================================
 
@@ -70,7 +71,7 @@ PLAYER_SPEED    = 1
 ALIENS_X_SPEED  = 1
 ALIENS_Y_SPEED  = ALIEN_LEN
 ALS_FRAME_MOVE  = %00100000
-MSL_SPEED       = 2
+MSL_SPEED       = 4
 
 ;   Limits
 PLAYER_L_LIMIT  = 33
@@ -116,8 +117,8 @@ MSL_STAT        ds  1   ; Missile Status (See Below)
 ;   0-1      Current Missile Draw   bit 0: Player MSL -- bit 1: Aliens MSL
 
 MSL_CURRSCAN    ds  1   ; Missile Current Scanline Delay
-MSL_NEXTPOS     ds  1   ; Relative Distance to Next Missile (below) - Only used in Aliens Missile Frame
-MSL_NEXTHMV     ds  1   ; Missile Current Fine Tuning (HMOVE) - Only used in Aliens Missile Frame
+MSL_RLTVSCAN    ds  1   ; Relative Distance to Next Missile - Only used in Alien Missile Frame'
+MSL_NEXTPOS     ds  1   ; Next Missile Pos                  - Only used in Alien Missile Frame
 
 ALIENS_POS      ds  1   ; Alien X-pos (First Line and Collumn)
 ALIENS_SCAN     ds  1   ; Alien Y-pos
@@ -245,14 +246,14 @@ VsyncWait:
     LDA #>Number0
     STA POINTER_GRP+1
 
-;   Speed Aliens
-    JSR ChangeAliensSpeed
-
 ;   Calculates relative indexes for Scores
     JSR SetIndexScore
 
+;   Speed Aliens
+    JSR ChangeAliensSpeed
+
 ;   Move Aliens
-    JSR CheckLogicAliens
+    JSR LogicAliens
     JSR MoveSpritesAliens
 
 ;   Set X-Pos of Aliens
@@ -265,91 +266,8 @@ VsyncWait:
     INX
     JSR SetHorizPos
 
-;   Possible Reset MSL
-    LDA #$FF
-    STA MSL_CURRSCAN
-
-;   Toggle MSL Frame
-    LDA MSL_STAT
-    EOR #%00000001
-    STA MSL_STAT
-
-;   Set Current Missile
-    LDA MSL_STAT
-    AND #%11100000
-    BEQ NoCurrMSL
-    BIT MSL_STAT
-    BPL NoPlayerMSL
-    LDA MSL_STAT
-    AND #%00000001
-    BEQ NoPlayerMSL
-;   Player MSL
-    LDA MSL_SCAN
-    STA MSL_CURRSCAN
-    LDA #0
-    STA MSL_NEXTPOS
-    STA MSL_NEXTHMV
-NoPlayerMSL:
-    LDA MSL_STAT
-    AND #%00000001
-    BNE NoCurrMSL
-;   JMP NoCurrMSL
-NoCurrMSL:
-
-
-;   Move Acty Misseles
-    BIT MSL_STAT
-    BPL AliensMissile1
-    LDA MSL_SCAN
-;   Check MSL Top Collision
-    CMP #[MSL_SPEED+1]
-    BCS PMSL
-;   Stop Draw
-    LDA MSL_STAT
-    AND #%01111111
-    STA MSL_STAT
-    JMP AliensMissile1
-PMSL:
-;   Move MSL
-    LDX #0
-    LDA #[-MSL_SPEED]
-    JSR MoveMSL
-AliensMissile1:
-    BIT MSL_STAT
-    BVC AliensMissile2
-;   Check MSL Ground Collision
-    LDA MSL_SCAN+1
-    CMP #[PLAYER_SCAN+PLAYER_LEN+1]
-    BCC A1MSL
-;   Stop Draw
-    LDA MSL_STAT
-    AND #%10111111
-    STA MSL_STAT
-    JMP AliensMissile2
-A1MSL:
-;   Move MSL
-    LDX #1
-    LDA #MSL_SPEED
-    JSR MoveMSL
-AliensMissile2:
-    LDA MSL_STAT
-    AND #%00100000
-    BEQ NoMoveMSL
-;   Check MSL Ground Collision
-    LDA MSL_SCAN+2
-    CMP #[PLAYER_SCAN+PLAYER_LEN+1]
-    BCC A2MSL
-;   Stop Draw
-    LDA MSL_STAT
-    AND #%11011111
-    STA MSL_STAT
-    JMP NoMoveMSL
-A2MSL:
-;   Move MSL
-    LDX #2
-    LDA #MSL_SPEED
-    JSR MoveMSL
-NoMoveMSL:
+;   Move Missel
+    JSR LogicMissile
 
 ;=============================================================================================
 ;                              INPUT CONTROL PROCESSING AREA
@@ -398,7 +316,7 @@ LeftMove:
     SBC #PLAYER_SPEED
     STA PLAYER_POS
 NoMove:
-;    Hard Reset
+;   Hard Reset
     LDA SWCHB
     AND #1
     BNE NoPressReset
@@ -519,12 +437,15 @@ LoopDrawScore:
     ASL
     ASL
 ;   Forced absolute mode to spend one more cycle, ensuring loop synchronization with the scanline
-    ORA.W TEMP_SCORE_ATT
+    ; ORA.W TEMP_SCORE_ATT
+    ORA TEMP_SCORE_ATT
     STA PF1
 
     DEC POINTER_GRP
 ;   If the BPL changes pages, the forced absolute mode in ORA must be removed.
     BPL LoopDrawScore
+;   All code inside the loop above,
+;   plus the branch cycles must have exactly 76 machine cycles (228 color clocks)
 ;-------------------------------
 
     LDA #0
@@ -585,13 +506,8 @@ WaitEnemies:
     BCC WaitEnemies
 
 ;------------------- Main loop for drawing Aliens -------------------
-;   SIZE increment for the Loop below not to present borrow page in Branch (temporary)
-    ROL $80
-    ROR $80
-    CMP $80
-    NOP
 
-    LDX #8
+    LDX #11
 LoopRelativeDelayAliens:
     DEX
     BNE LoopRelativeDelayAliens
@@ -629,7 +545,7 @@ DrawEnemies:    ; 22-30      0
     STX GRP1                    ;   GRP0A/GRP0B == Alien 5  ;  GRP1A == Alien 6/GPR1B == Alien 4
     STX GRP0                    ;   GRP0A == Alien 6/GRP0B == Alien 5  ;  GRP1A/GPR1B == Alien 6
 
-;   Delay 11 Cycles
+;   Delay 11 Cycles with no cross page, else 10 cycles
     PHA
     PLA
     NOP
@@ -747,7 +663,7 @@ ExitAliens:
 
 
 ;   Jump if Aliens Land (No Print Player)
-    CPY #PLAYER_SCAN-4
+    CPY #[PLAYER_SCAN-4]
     BCC PlayerAlive
 
 ;   Player Is Dead
@@ -826,7 +742,6 @@ WaitDefense2:
 LoopRelativeDelayDefense:
     DEY
     BNE LoopRelativeDelayDefense
-    NOP
 
 ;------------------- Main loop for drawing Defense -------------------
 ;   Time-synchronized loop to draw defenses
@@ -858,14 +773,10 @@ TryDrawMSL4:
     LDA [DEFENSE_SHAPE+2*DEFENSE_LEN],X
     STA GRP0
 
-    LDY #4
+    LDY #5
 LoopDelayDefense:
     DEY
     BNE LoopDelayDefense
-;   Delay 6 Cycles
-    NOP
-    NOP
-    NOP
 
     DEC MSL_CURRSCAN
     LDA MSL_CURRSCAN
@@ -1026,7 +937,7 @@ LimLen:
 ;=============================================================================================
 ;=============================================================================================
 ;   Set Direction and Position of Aliens Sprites
-    JSR CheckLogicAliens
+    JSR LogicAliens
 
 ;   Overscan Code
     JSR RandNumber  ; Temp, only tests
@@ -1091,7 +1002,7 @@ WaitOverscanEnd:            ; Timing OverScanlines
 ;   Get next random number
 ;   Based in Linear-feedback Shift Register
 ;
-RandNumber:
+RandNumber:             SUBROUTINE
     LDA RANDOM_NUMBER
     LSR
     BCC NoEOR
@@ -1108,7 +1019,8 @@ NoEOR:
 ;   Function with Extreme Precision of Time Consumption and Triggering of Object Position Recorders,
 ; with the Same Value as Register A.
 ;
-SetHorizPos:        ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
+SetHorizPos:            SUBROUTINE
+                    ; CPU Execution Cost and Accumulated Color Clocks (Minimum and Maximum cases After the Loop)
     STA WSYNC       ;  -
     CMP $80         ; 3 (9)
     SEC             ; 2 (15)
@@ -1132,7 +1044,7 @@ LoopDivision: ; Each loop consumes 5 cycles, the last loop consumes 4. The minim
 ;   Collision between Player 0 and Ball,
 ;    possibilities: aliens, Defense, player hit
 ;
-BallCollision:
+BallCollision:          SUBROUTINE
     BIT MSL_STAT
     BPL AlienShoot
     LDA #$80
@@ -1228,7 +1140,7 @@ AlienShoot:
 
 ;FUNCTION DefenseBallCollision (None):
 ;   Aliens or Player hit defense Structure
-DefenseBallCollision:
+DefenseBallCollision:   SUBROUTINE
 ;   Detecting which column was hit
     LDX #0
     LDA MSL_POS
@@ -1318,7 +1230,7 @@ OutDefenseCollision:
 
 ;FUNCTION ResetGame (None):
 ;   Restart the Game or Prepare for a New Round
-ResetGame:
+ResetGame:              SUBROUTINE
     LDA SCORE_VALUE+2
     CMP SCORE_VALUE+3
     BEQ ScoreEqual
@@ -1407,7 +1319,7 @@ LoopLoadDefense:
 ; Taking the Position of the Object on the Screen as a Criterion,
 ; This Serves to Keep the Swap Time Between GRP0 and GRP1 Viable, Keeping the Positioning Aligned
 ;
-AjustDelayAliens:
+AjustDelayAliens:       SUBROUTINE
 ;   Default Set of High and Low Addresses
     LDA #<DrawEnemies
     STA ALIENS_DELAY
@@ -1437,12 +1349,12 @@ OutAjust:
     RTS
 
 
-;FUNCTION CheckLogicAliens (None):
+;FUNCTION LogicAliens (None):
 ;   This Function Will Check Empty Side Collumns,
 ; If You Think It Will Adjust The Aliens' Movement Limits,
 ; Always Keeping The First Collumn And Line As Relative To The Movement
 ;
-CheckLogicAliens:
+LogicAliens:            SUBROUTINE
     LDX #4
     LDA ALIENS_STAT+5
 LoopCheckCollumns:           ; Check Empty Collumns
@@ -1541,7 +1453,7 @@ NoUnderChange:
 ; Making the Aliens Move Horizontally and Treating the Vertical Descent
 ; When It Reaches the Side Limits
 ;
-MoveSpritesAliens:
+MoveSpritesAliens:      SUBROUTINE
 ;   Check End Game
     LDA ALIENS_SPEED
     BEQ SetOut
@@ -1615,9 +1527,9 @@ NoEndGame:
 ;FUNCTION ChangeAliensSpeed (None):
 ; Count the number of aliens defeated and compare with the table,
 ;to generate a compatible speed
-ChangeAliensSpeed:
+ChangeAliensSpeed:      SUBROUTINE
 ;   Check the end of the game
-    LDA TEMP_SCORE_ATT
+    LDA ALIENS_SPEED
     BEQ OutChangeSpeed
     LDX #5
     LDA #0
@@ -1637,7 +1549,7 @@ NoAlienAlive:
     DEX
     BPL LoopLoadStat
 
-;   Compare which quantity in the table is greater, 
+;   Compare which quantity in the table is greater,
 ; and get the corresponding speed
     LDA TEMP_SCORE_ATT
     LDX #[SPEED_TB_LEN-1]
@@ -1658,7 +1570,7 @@ OutChangeSpeed:
 ; to the Number0 graph, to be able to access
 ; them and draw them on the Score screen
 ;
-SetIndexScore:
+SetIndexScore:          SUBROUTINE
     LDX #3
     LDY #6
 LoopIndexScore:
@@ -1701,7 +1613,7 @@ LoopIndexScore:
 ; use the X input to change the current missile and
 ; use the A offset value to move
 ;
-MoveMSL:
+MoveMSL:                SUBROUTINE
     CLC
     ADC MSL_SCAN,X
     STA MSL_SCAN,X
@@ -1713,7 +1625,7 @@ MoveMSL:
 ; the missile (ball), based on the relative
 ; position of the missile in relation to the screen.
 ;
-TryDrawMSL:
+TryDrawMSL:             SUBROUTINE
     DEC MSL_CURRSCAN
     LDA MSL_CURRSCAN
     CMP #8
@@ -1726,7 +1638,7 @@ OutTryMSL:
     RTS
 
 ;FUNCTION TryDrawOrChangeMSL (None):
-TryDrawOrChangeMSL:
+TryDrawOrChangeMSL:     SUBROUTINE
     DEC MSL_CURRSCAN
     LDA MSL_CURRSCAN
     CMP #8
@@ -1738,16 +1650,70 @@ DrawMSL2:
 
     LDA MSL_CURRSCAN
     BPL NoNextMSL
-    LDA MSL_NEXTPOS
+    LDA MSL_RLTVSCAN
     BEQ NoNextMSL
     CLC
-    ADC MSL_NEXTPOS
+    ADC MSL_RLTVSCAN    ; 2x
     STA MSL_CURRSCAN
-    LDA MSL_NEXTHMV
-    STA HMBL
     LDA #0
-    STA MSL_NEXTPOS
+    STA MSL_RLTVSCAN
 NoNextMSL:
+    RTS
+
+
+;FUNCTION LogicMissile (None):
+LogicMissile:           SUBROUTINE
+;   Possible No Current Missile
+    LDA #$FF
+    STA MSL_CURRSCAN
+
+;   Toggle MSL Frame
+    LDA MSL_STAT
+    EOR #%00000001
+    STA MSL_STAT
+
+;   Set current frame missile if one exists
+    LDA MSL_STAT
+    AND #%00000001
+    BNE AliensFrameMSL  ; Check if it is a player missile frame
+
+;   Player Frame
+    BIT MSL_STAT
+    BPL NoCurrMSL       ; Check if there is a current missile for player
+;   Player MSL
+    LDA MSL_SCAN
+    SEC
+    SBC #[MSL_SPEED]
+    STA MSL_SCAN
+    CMP #[MSL_SPEED+1]
+;   Check top Collision
+    BCS SetPlyrMSLScan
+;   Top Colission
+    LDA MSL_STAT
+    AND #%01111111
+    STA MSL_STAT
+    LDA #$FF
+;   No Collision
+SetPlyrMSLScan:
+    STA MSL_CURRSCAN    ; Player Missile Scanline Set
+    LDA #0
+    STA MSL_RLTVSCAN    ; No other missile in this frame (only one missile in the player's frame)
+    JMP OutLogic
+
+;   Aliens Frame
+AliensFrameMSL:
+    LDA MSL_STAT
+    AND #%01100000
+    BEQ NoCurrMSL       ; Check if there is any alien missile
+    ; future code of the aliens here
+    LDA #0
+    STA MSL_RLTVSCAN    ; No other missile in this frame (only one missile in the player's frame)
+    JMP OutLogic
+;   No Curr Missile
+NoCurrMSL:
+    LDA #$FF
+    STA MSL_CURRSCAN
+OutLogic:
     RTS
 
 
