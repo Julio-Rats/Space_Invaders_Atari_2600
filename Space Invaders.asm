@@ -85,7 +85,7 @@ TAPS            = $B8
 SEED            = 13
 
 ;   Probabilistics Used
-PROB_DEFENSE_DMG = [255 * 50/100]
+PROB_DEFENSE_DMG = [255 * 60/100]
 
 ;===================================================================
 ;===================================================================
@@ -226,6 +226,8 @@ VsyncWait:
     STA COLUP0
     LDA #RIGHT_SCORE_COLOR
     STA COLUP1
+
+;   Playfield Score Mode
     LDA #$02
     STA CTRLPF
 
@@ -448,12 +450,13 @@ LoopDrawScore:
 ;   plus the branch cycles must have exactly 76 machine cycles (228 color clocks)
 ;-------------------------------
 
+;   Disable PF and Remove Score Mode
     LDA #0
     STA PF1
+    STA CTRLPF
 ;   Clear Buffers of Moves, made in VBlank
     STA HMCLR
 ;   Set Color to Aliens
-    STA CTRLPF          ; A == 0
     LDA #ENEMY_COLOR
     STA COLUP0
     STA COLUP1
@@ -886,22 +889,19 @@ PlayerDeadJmp:
     LDA #LEFT_LIMIT_COLOR
     STA COLUP1
 ;   Delay M0 Limits Position
-    NOP
-    STA RESM0                   ; --> Need Sync
+    LDX #3                      ;   Delay M1 Limits Position
+    STA RESM0                   ; --> Need Sync Pos 29
 ;   Fine Limits Position
     LDA #$C0
-    STA HMM0
-    LDA #$F0
-    STA HMM1
-;   Delay M1 Limits Position
-    LDX #3
+    STA HMM0                    ; Pos 33
+    LDA #$90
+    STA HMM1                    ; Pos 123
 DelayM1:
     DEX
     BNE DelayM1
-    NOP
-    STA RESM1                   ; --> Need Sync
-;   Apply Moves
     INY
+    STA RESM1                   ; --> Need Sync Pos 116
+;   Apply Moves
     STA WSYNC
     STA HMOVE
 ;   Ground Color
@@ -1041,12 +1041,13 @@ LoopDivision: ; Each loop consumes 5 cycles, the last loop consumes 4. The minim
 
 
 ;FUNCTION BallCollision (None):
-;   Collision between Player 0 and Ball,
+;   Collision between Players and Ball,
 ;    possibilities: aliens, Defense, player hit
 ;
 BallCollision:          SUBROUTINE
     BIT MSL_STAT
     BPL AlienShoot
+;   Disable Player MSL
     LDA #$80
     EOR MSL_STAT
     STA MSL_STAT
@@ -1072,15 +1073,15 @@ CheckCollumnCollision:
 
 CollumnDetected:
 ;   Check which line collided
-    LDX #[ALIENS_LINES-1]
-    LDA ALIENS_SCAN
-    CLC
-    ADC #[ALIEN_LEN-8]    ; 8 is the Max Length of the Missile
+    LDA #[[ALIEN_LEN+ALIENS_INTER]*[ALIENS_LINES-1]-ALIENS_LINES-8]
+    SEC
+    ADC ALIENS_SCAN
+    LDX #0
 CheckLineCollision:
     CMP MSL_SCAN
-    BCS LineDetected
-    ADC #[ALIEN_LEN+ALIENS_INTER]
-    DEX
+    BCC LineDetected
+    SBC #[ALIEN_LEN+ALIENS_INTER]
+    INX
     JMP CheckLineCollision
 
 ;   X := Line Collided
@@ -1491,7 +1492,7 @@ SetOut:
     RTS
 
 ;   Handles collisions with edges, Make reverse motion
-ReverseDirection:   ; Treats vertical displacement of aliens
+ReverseDirection:           ; Treats vertical displacement of aliens
     LDA ALIENS_SCAN
     CLC
     ADC #ALIENS_Y_SPEED
@@ -1521,7 +1522,9 @@ NoEndGame:
     LDA ALIENS_MASK
     EOR #$80
     STA ALIENS_MASK
-    RTS
+    JMP CheckBaseDestroyed  ; WARNING !! Use Trick Change JSR to JMP
+    ;   WARNING if need code here !!
+    ; RTS
 
 
 ;FUNCTION ChangeAliensSpeed (None):
@@ -1608,6 +1611,38 @@ LoopIndexScore:
     RTS
 
 
+;FUNCTION CheckBaseDestroyed():
+;   Checks if the final scanline of the aliens is over the defense base,
+; if it is, it completely destroys the base, this guarantees the bug of the player
+; being fast enough to eliminate the aliens over the base, and make the base resurrect
+CheckBaseDestroyed:     SUBROUTINE
+    LDX #0
+    LDA #[[ALIEN_LEN+ALIENS_INTER]*ALIENS_LINES-ALIENS_INTER-1]
+    SEC
+    ADC ALIENS_SCAN
+LoopScanAliens:
+    LDY ALIENS_STAT,X
+    BNE EmptyLine
+    SBC #[ALIEN_LEN+ALIENS_INTER]
+    INX
+    CPX #ALIENS_LINES
+    BNE LoopScanAliens
+
+EmptyLine:
+    CMP #[DEF_SCAN-3]
+    BCC OutCheck
+
+    LDX #[3*DEFENSE_LEN-1]
+    LDA #0
+LoopClearBase:
+    STA DEFENSE_SHAPE,X
+    DEX
+    BPL LoopClearBase
+
+OutCheck:
+    RTS
+
+
 ;FUNCTION MoveMSL(A,X):
 ;   This function moves missiles towards players and aliens
 ; use the X input to change the current missile and
@@ -1652,8 +1687,7 @@ DrawMSL2:
     BPL NoNextMSL
     LDA MSL_RLTVSCAN
     BEQ NoNextMSL
-    CLC
-    ADC MSL_RLTVSCAN    ; 2x
+    ASL ; 2x
     STA MSL_CURRSCAN
     LDA #0
     STA MSL_RLTVSCAN
